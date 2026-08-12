@@ -1,0 +1,19 @@
+.env
+.qodo
+credentials.json
+logs/
+*.session
+*.session-journal
+prometheus-data/
+grafana-data/
+.venv2
+.venv/
+__pycache__/
+*.pyc
+.idea/
+# Реестр заявок: база живёт в volume, в образ и репозиторий не попадает
+data/
+*.db
+*.db-wal
+*.db-shm
+.pytest_cache/

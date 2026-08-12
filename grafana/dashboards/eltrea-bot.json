@@ -1,0 +1,220 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "title": "Eltrea Bot",
+  "uid": "eltrea-bot",
+  "version": 2,
+  "schemaVersion": 38,
+  "tags": ["eltrea", "vacancies"],
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Просмотров страницы (всего)",
+      "id": 1,
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "eltrea_page_views_total", "refId": "A", "instant": true}
+      ],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value"}
+    },
+    {
+      "type": "stat",
+      "title": "Активных вакансий (TRUE)",
+      "id": 2,
+      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(eltrea_vacancies_in_table{is_active=\"TRUE\"})", "refId": "A", "instant": true}
+      ],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green"}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "Суммарная потребность",
+      "id": 3,
+      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(eltrea_vacancies_total_need)", "refId": "A", "instant": true}
+      ],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value"}
+    },
+    {
+      "type": "stat",
+      "title": "LLM расход за 24ч (₽)",
+      "id": 4,
+      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(increase(eltrea_llm_cost_rub_total[24h]))", "refId": "A", "instant": true}
+      ],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value"},
+      "fieldConfig": {"defaults": {"unit": "currencyRUB", "decimals": 2}}
+    },
+
+    {
+      "type": "bargauge",
+      "title": "Использование фильтров (за 24ч)",
+      "id": 10,
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (filter) (increase(eltrea_filter_used_total[24h]))", "refId": "A", "legendFormat": "{{filter}}", "instant": true}
+      ],
+      "options": {"displayMode": "gradient", "orientation": "horizontal", "showUnfilled": true, "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "piechart",
+      "title": "Топ значений source (за 24ч)",
+      "id": 11,
+      "gridPos": {"x": 12, "y": 4, "w": 6, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (value) (increase(eltrea_filter_value_total{filter=\"source\"}[24h]))", "refId": "A", "legendFormat": "{{value}}", "instant": true}
+      ],
+      "options": {"pieType": "donut", "legend": {"displayMode": "list", "placement": "right"}, "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "piechart",
+      "title": "Топ значений geo (за 24ч)",
+      "id": 12,
+      "gridPos": {"x": 18, "y": 4, "w": 6, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (value) (increase(eltrea_filter_value_total{filter=\"geo\"}[24h]))", "refId": "A", "legendFormat": "{{value}}", "instant": true}
+      ],
+      "options": {"pieType": "donut", "legend": {"displayMode": "list", "placement": "right"}, "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+
+    {
+      "type": "barchart",
+      "title": "Возраст кандидата (за 24ч)",
+      "id": 13,
+      "gridPos": {"x": 0, "y": 12, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (value) (increase(eltrea_filter_value_total{filter=\"age\"}[24h]))", "refId": "A", "legendFormat": "{{value}} лет", "instant": true}
+      ],
+      "options": {"orientation": "auto"}
+    },
+    {
+      "type": "barchart",
+      "title": "Готов смен (за 24ч)",
+      "id": 14,
+      "gridPos": {"x": 8, "y": 12, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (value) (increase(eltrea_filter_value_total{filter=\"max_shifts\"}[24h]))", "refId": "A", "legendFormat": "{{value}} смен", "instant": true}
+      ],
+      "options": {"orientation": "auto"}
+    },
+    {
+      "type": "barchart",
+      "title": "Пол (за 24ч)",
+      "id": 15,
+      "gridPos": {"x": 16, "y": 12, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (value) (increase(eltrea_filter_value_total{filter=\"gender\"}[24h]))", "refId": "A", "legendFormat": "{{value}}", "instant": true}
+      ],
+      "options": {"orientation": "auto"}
+    },
+
+    {
+      "type": "table",
+      "title": "Вакансии в таблице (source × is_active)",
+      "id": 20,
+      "gridPos": {"x": 0, "y": 20, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "eltrea_vacancies_in_table", "refId": "A", "format": "table", "instant": true}
+      ]
+    },
+    {
+      "type": "bargauge",
+      "title": "Сумма потребности по source",
+      "id": 21,
+      "gridPos": {"x": 12, "y": 20, "w": 6, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "eltrea_vacancies_total_need", "refId": "A", "legendFormat": "{{source}}", "instant": true}
+      ],
+      "options": {"displayMode": "gradient", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "bargauge",
+      "title": "Средняя ставка по source",
+      "id": 22,
+      "gridPos": {"x": 18, "y": 20, "w": 6, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "eltrea_vacancies_avg_shift_rate", "refId": "A", "legendFormat": "{{source}}", "instant": true}
+      ],
+      "options": {"displayMode": "gradient", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "fieldConfig": {"defaults": {"unit": "currencyRUB"}}
+    },
+
+    {
+      "type": "piechart",
+      "title": "Распределение по shift_type",
+      "id": 30,
+      "gridPos": {"x": 0, "y": 28, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "eltrea_vacancies_by_shift_type", "refId": "A", "legendFormat": "{{shift_type}}", "instant": true}
+      ],
+      "options": {"pieType": "donut", "legend": {"displayMode": "list", "placement": "right"}, "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "piechart",
+      "title": "Распределение по min_shifts",
+      "id": 31,
+      "gridPos": {"x": 8, "y": 28, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "eltrea_vacancies_by_min_shifts", "refId": "A", "legendFormat": "{{min_shifts}} смен", "instant": true}
+      ],
+      "options": {"pieType": "donut", "legend": {"displayMode": "list", "placement": "right"}, "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Pipeline: запуски (success/failed)",
+      "id": 40,
+      "gridPos": {"x": 16, "y": 28, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (status) (rate(eltrea_pipeline_runs_total[5m]))", "refId": "A", "legendFormat": "{{status}}"}
+      ]
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Pipeline: added/updated по source",
+      "id": 41,
+      "gridPos": {"x": 0, "y": 36, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (source) (rate(eltrea_pipeline_added_total[15m]))", "refId": "A", "legendFormat": "added · {{source}}"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (source) (rate(eltrea_pipeline_updated_total[15m]))", "refId": "B", "legendFormat": "updated · {{source}}"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM: токены (input/output)",
+      "id": 42,
+      "gridPos": {"x": 12, "y": 36, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (type) (rate(eltrea_llm_tokens_total[5m]))", "refId": "A", "legendFormat": "{{type}}"}
+      ]
+    }
+  ]
+}

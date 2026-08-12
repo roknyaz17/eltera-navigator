@@ -1,0 +1,105 @@
+{# Панель сверки: слева исходник заявки, справа то, что из него распозналось.
+   Отдаётся фрагментом — подгружается в модальное окно на /registry. #}
+<div class="row g-3">
+    <div class="col-lg-5">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="mb-0">Как пришло</h6>
+            <span class="badge bg-light text-dark border">
+                {{ source_titles.get(position.source, position.source) }}
+                {% if position.revision > 1 %} · ревизия {{ position.revision }}{% endif %}
+            </span>
+        </div>
+        <div class="text-muted small mb-2">
+            Заявка <a href="/registry/{{ position.request_id }}" class="req-id">{{ position.request_id }}</a>
+            {% if position.source_url %}
+            · <a href="{{ position.source_url }}" target="_blank" rel="noopener">открыть источник ↗</a>
+            {% endif %}
+        </div>
+        <div class="raw-text">{{ position.raw_text or 'Исходный текст не сохранён' }}</div>
+    </div>
+
+    <div class="col-lg-7">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="mb-0">Как распозналось</h6>
+            <span class="text-muted small">
+                заполнено {{ filled }} из {{ total_fields }} полей
+            </span>
+        </div>
+
+        {# Показываем и пустые поля тоже: смысл панели в том, чтобы менеджер
+           сразу видел, чего в заявке не было, и шёл уточнять. #}
+        {% for group_title, fields in field_groups %}
+        <div class="mb-2">
+            <div class="text-uppercase text-muted" style="font-size:.7rem; letter-spacing:.05em">{{ group_title }}</div>
+            <dl class="field-grid">
+                {% for name in fields %}
+                <dt>{{ labels.get(name, name) }}</dt>
+                <dd>
+                    {% set shown = values.get(name) %}
+                    {% if shown %}{{ shown }}{% else %}<span class="empty">не указано в заявке</span>{% endif %}
+                </dd>
+                {% endfor %}
+            </dl>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<hr>
+
+<form method="post" action="/registry/position/{{ position.position_id }}" class="row g-2">
+    <div class="col-12"><h6 class="mb-1">Работа менеджера</h6>
+        <div class="text-muted small mb-2">Эти поля никогда не перезаписываются приёмом заявок.</div>
+    </div>
+    <div class="col-md-3">
+        <label class="form-label small mb-1">Статус</label>
+        <input type="text" name="status" class="form-control form-control-sm" value="{{ position.status or '' }}">
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Приоритет</label>
+        <input type="text" name="priority" class="form-control form-control-sm" value="{{ position.priority or '' }}">
+    </div>
+    <div class="col-md-3">
+        <label class="form-label small mb-1">Ответственный</label>
+        <input type="text" name="responsible_manager" class="form-control form-control-sm" value="{{ position.responsible_manager or '' }}">
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Рыночная ставка</label>
+        <input type="number" name="market_rate" class="form-control form-control-sm" value="{{ position.market_rate or '' }}">
+    </div>
+    <div class="col-md-2 d-flex align-items-end">
+        <button type="submit" class="btn btn-sm btn-primary w-100">Сохранить</button>
+    </div>
+    <div class="col-12">
+        <label class="form-label small mb-1">Комментарий рекрутера</label>
+        <textarea name="recruiter_comment" class="form-control form-control-sm" rows="2">{{ position.recruiter_comment or '' }}</textarea>
+    </div>
+</form>
+
+{% if history %}
+<hr>
+<h6 class="mb-2">Что менялось</h6>
+<table class="table table-sm">
+    <thead><tr><th>Когда</th><th>Поле</th><th>Было</th><th>Стало</th><th>Заявка</th></tr></thead>
+    <tbody>
+    {% for h in history %}
+    <tr>
+        <td class="nowrap small text-muted">{{ h.changed_at[:16].replace('T', ' ') }}</td>
+        <td class="small">{{ labels.get(h.field, h.field) }}</td>
+        <td class="small">{% if h.old_value %}{{ h.old_value }}{% else %}<span class="empty">—</span>{% endif %}</td>
+        <td class="small">
+            {% if h.new_value %}<strong>{{ h.new_value }}</strong>
+            {% else %}<span class="empty">очищено</span>{% endif %}
+        </td>
+        {# Изменение могло прийти не из заявки, а из разовой чистки — тогда
+           в request_id лежит метка операции, и ссылке вести некуда. #}
+        <td class="req-id small">
+            {% if h.request_id.startswith('ELT-') %}
+            <a href="/registry/{{ h.request_id }}">{{ h.request_id }}</a>
+            {% else %}<span class="text-muted">{{ h.request_id }}</span>{% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endif %}

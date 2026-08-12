@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Вакансии — Eltrea Bot</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" defer></script>
+    <style>
+        body { padding: 16px 24px; }
+        .table-vacancies td { vertical-align: middle; font-size: 0.9rem; }
+        .table-vacancies th { font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; }
+        .table-vacancies th a { color: inherit; text-decoration: none; }
+        .table-vacancies th a:hover { color: #0d6efd; text-decoration: underline; }
+        .table-vacancies th.sorted a { color: #0d6efd; }
+        .badge-source { font-weight: 500; }
+        .nowrap { white-space: nowrap; }
+        .ellipsis { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .filters-row { gap: 8px; row-gap: 8px; }
+        .stats-bar { font-size: 0.85rem; color: #6c757d; }
+        .inactive-row { opacity: 0.55; }
+    </style>
+</head>
+<body>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h3 mb-0">Вакансии</h1>
+    <div class="stats-bar">
+        Всего после фильтров: <strong>{{ total }}</strong> | Кеш: {{ cache_age }}&nbsp;сек назад | Страница {{ page }} из {{ total_pages }}
+    </div>
+</div>
+
+<form method="get" action="/vacancies" class="row filters-row mb-3 align-items-end">
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Источник</label>
+        <select name="source" class="form-select form-select-sm">
+            <option value="">— все —</option>
+            {% for s in available_sources %}
+                <option value="{{ s }}" {% if filters.source == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Город</label>
+        <input type="text" name="city" class="form-control form-control-sm"
+               value="{{ filters.city or '' }}" placeholder="часть названия">
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">География</label>
+        <select name="geo" class="form-select form-select-sm">
+            <option value="">— все —</option>
+            {% for code, label in geo_options.items() %}
+                <option value="{{ code }}" {% if filters.geo == code %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Поиск (по вакансии)</label>
+        <input type="text" name="q" class="form-control form-control-sm"
+               value="{{ filters.q or '' }}" placeholder="комплектовщик">
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Пол</label>
+        <select name="gender" class="form-select form-select-sm">
+            <option value="">— все —</option>
+            {% for g in gender_options %}
+                <option value="{{ g }}" {% if filters.gender == g %}selected{% endif %}>{{ g|capitalize }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Возраст кандидата</label>
+        <select name="age" class="form-select form-select-sm">
+            <option value="">— любой —</option>
+            {% for a in age_options %}
+                <option value="{{ a }}" {% if filters.age == (a|string) %}selected{% endif %}>{{ a }} лет</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Готов смен</label>
+        <select name="max_shifts" class="form-select form-select-sm">
+            <option value="">— любое —</option>
+            {% for n in shifts_options %}
+                <option value="{{ n }}" {% if filters.max_shifts == (n|string) %}selected{% endif %}>{{ n }} смен</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-3">
+        <label class="form-label small mb-1">СБ</label>
+        <div class="dropdown w-100">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle w-100 text-start sb-dropdown-btn"
+                    type="button"
+                    data-bs-toggle="dropdown"
+                    data-bs-auto-close="outside"
+                    aria-expanded="false">
+                {% if filters.sb_policy %}
+                    Выбрано: {{ filters.sb_policy|length }}
+                {% else %}
+                    — все —
+                {% endif %}
+            </button>
+            <ul class="dropdown-menu p-2" style="min-width: 260px; max-height: 320px; overflow-y: auto;">
+                {% for s in available_sb %}
+                    <li>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox"
+                                   id="sb_{{ loop.index }}"
+                                   name="sb_policy"
+                                   value="{{ s }}"
+                                   {% if filters.sb_policy and s in filters.sb_policy %}checked{% endif %}>
+                            <label class="form-check-label small" for="sb_{{ loop.index }}">{{ s }}</label>
+                        </div>
+                    </li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Статус</label>
+        <select name="is_active" class="form-select form-select-sm">
+            <option value="true"  {% if filters.is_active == 'true' %}selected{% endif %}>Активные</option>
+            <option value="false" {% if filters.is_active == 'false' %}selected{% endif %}>Неактивные</option>
+            <option value="all"   {% if filters.is_active == 'all' %}selected{% endif %}>Все</option>
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">На странице</label>
+        <select name="per_page" class="form-select form-select-sm">
+            {% for n in [25, 50, 100, 200] %}
+                <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-5 d-flex gap-2 align-items-end">
+        <button type="submit" class="btn btn-primary btn-sm flex-grow-1">Применить</button>
+        <a href="/vacancies" class="btn btn-outline-secondary btn-sm">Сбросить</a>
+    </div>
+</form>
+
+{% macro sortable_th(col, label, extra_class='') -%}
+    <th class="{{ extra_class }} {% if sort == col %}sorted{% endif %}">
+        <a href="{{ sort_link(col) }}">{{ label }}{{ sort_arrow(col) }}</a>
+    </th>
+{%- endmacro %}
+
+{% if items %}
+<div class="table-responsive">
+    <table class="table table-striped table-hover table-vacancies align-middle">
+        <thead class="table-light">
+            <tr>
+                {{ sortable_th('vacancy_name', 'Вакансия') }}
+                {{ sortable_th('city', 'Город / Объект') }}
+                {{ sortable_th('shift_rate', 'Ставка', 'text-end nowrap') }}
+                {{ sortable_th('need_men', 'М', 'text-center') }}
+                {{ sortable_th('need_women', 'Ж', 'text-center') }}
+                {{ sortable_th('need_couples', 'Сем', 'text-center') }}
+                {{ sortable_th('need_total', 'Всего', 'text-center') }}
+                {{ sortable_th('shift_type', 'Смена') }}
+                {{ sortable_th('min_shifts', 'Смен от', 'text-center') }}
+                {{ sortable_th('requires_tsd', 'ТСД', 'text-center') }}
+                {{ sortable_th('sb_policy', 'СБ') }}
+                {{ sortable_th('source', 'Источник') }}
+                {{ sortable_th('last_updated_at', 'Обновлено', 'nowrap') }}
+                {{ sortable_th('is_active', 'Активна', 'text-center') }}
+                <th class="text-center">Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for v in items %}
+            <tr class="{% if v.is_active != 'TRUE' %}inactive-row{% endif %}">
+                <td class="ellipsis" title="{{ v.vacancy_name }}">{{ v.vacancy_name }}</td>
+                <td>
+                    <div>{{ v.city or '—' }}</div>
+                    {% if v.object_name %}<div class="text-muted small">{{ v.object_name }}</div>{% endif %}
+                </td>
+                <td class="text-end nowrap">
+                    {% if v.shift_rate %}{{ v.shift_rate }} ₽{% else %}—{% endif %}
+                </td>
+                <td class="text-center">{% if v.need_men != '' %}{{ v.need_men }}{% else %}—{% endif %}</td>
+                <td class="text-center">{% if v.need_women != '' %}{{ v.need_women }}{% else %}—{% endif %}</td>
+                <td class="text-center">{% if v.need_couples != '' %}{{ v.need_couples }}{% else %}—{% endif %}</td>
+                <td class="text-center fw-semibold">{% if v.need_total != '' %}{{ v.need_total }}{% else %}—{% endif %}</td>
+                <td>
+                    {% if v.shift_type == 'day' %}<span class="badge bg-warning text-dark">день</span>
+                    {% elif v.shift_type == 'night' %}<span class="badge bg-dark">ночь</span>
+                    {% elif v.shift_type == 'mixed' %}<span class="badge bg-info text-dark">смеш.</span>
+                    {% else %}{{ v.shift_type or '—' }}{% endif %}
+                </td>
+                <td class="text-center">{% if v.min_shifts != '' %}{{ v.min_shifts }}{% else %}—{% endif %}</td>
+                <td class="text-center">
+                    {% if v.requires_tsd == 'TRUE' %}<span class="text-success">✓</span>
+                    {% elif v.requires_tsd == 'FALSE' %}<span class="text-muted">—</span>
+                    {% else %}—{% endif %}
+                </td>
+                <td class="ellipsis" title="{{ v.sb_policy }}">{{ v.sb_policy or '—' }}</td>
+                <td>
+                    {% if v.source_url %}
+                        <a href="{{ v.source_url }}" target="_blank" rel="noopener"
+                           class="btn btn-sm btn-outline-secondary badge-source"
+                           title="Открыть источник">
+                            {{ v.source }} ↗
+                        </a>
+                    {% else %}
+                        <span class="badge badge-source bg-secondary">{{ v.source }}</span>
+                    {% endif %}
+                </td>
+                <td class="nowrap small text-muted">{{ v.last_updated_at }}</td>
+                <td class="text-center">
+                    {% if v.is_active == 'TRUE' %}<span class="text-success">✓</span>
+                    {% else %}<span class="text-danger">✗</span>{% endif %}
+                </td>
+                <td class="text-center">
+                    {% if v.original_message %}
+                        <button type="button" class="btn btn-sm btn-outline-primary"
+                                data-bs-toggle="modal"
+                                data-bs-target="#originalModal"
+                                data-message="{{ v.original_message }}"
+                                data-vacancy="{{ v.vacancy_name }} · {{ v.source }}"
+                                title="Показать исходное сообщение">
+                            📄
+                        </button>
+                    {% else %}
+                        <span class="text-muted small">—</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if total_pages > 1 %}
+<nav>
+    <ul class="pagination pagination-sm">
+        <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+            <a class="page-link" href="?{{ pagination_qs(page - 1) }}">Назад</a>
+        </li>
+        <li class="page-item disabled"><span class="page-link">{{ page }} / {{ total_pages }}</span></li>
+        <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
+            <a class="page-link" href="?{{ pagination_qs(page + 1) }}">Вперёд</a>
+        </li>
+    </ul>
+</nav>
+{% endif %}
+
+{% else %}
+<div class="alert alert-info">Ничего не нашлось под текущие фильтры.</div>
+{% endif %}
+
+<footer class="text-muted small mt-4 pt-3 border-top">
+    Eltrea Bot · кеш TTL {{ cache_ttl }} сек · <a href="/health">/health</a> · <a href="/jobs">/jobs</a>
+</footer>
+
+<!-- Модал для исходного сообщения -->
+<div class="modal fade" id="originalModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="originalModalTitle">Исходное сообщение</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body">
+                <pre id="originalModalBody"
+                     style="white-space: pre-wrap; word-wrap: break-word; font-family: inherit; margin: 0;"></pre>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="copyOriginalBtn" class="btn btn-sm btn-outline-secondary">Копировать</button>
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Подмена содержимого модалки при открытии — один модал на всю таблицу.
+    document.addEventListener('DOMContentLoaded', function () {
+        var modalEl = document.getElementById('originalModal');
+        if (!modalEl) return;
+        modalEl.addEventListener('show.bs.modal', function (event) {
+            var trigger = event.relatedTarget;
+            var msg = trigger ? trigger.getAttribute('data-message') : '';
+            var vac = trigger ? trigger.getAttribute('data-vacancy') : '';
+            document.getElementById('originalModalTitle').textContent =
+                vac ? ('Сообщение · ' + vac) : 'Исходное сообщение';
+            document.getElementById('originalModalBody').textContent = msg || '(пусто)';
+        });
+        var copyBtn = document.getElementById('copyOriginalBtn');
+        if (copyBtn) {
+            copyBtn.addEventListener('click', function () {
+                var text = document.getElementById('originalModalBody').textContent || '';
+                navigator.clipboard.writeText(text).then(function () {
+                    copyBtn.textContent = 'Скопировано ✓';
+                    setTimeout(function () { copyBtn.textContent = 'Копировать'; }, 1500);
+                });
+            });
+        }
+    });
+</script>
+
+</body>
+</html>

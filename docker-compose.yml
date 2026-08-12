@@ -1,0 +1,81 @@
+# Файловый лог приложения ротируется помесячно средствами loguru
+# (см. logging_config.py). Здесь ограничиваем ВТОРОЙ поток логов — stdout
+# контейнеров, который Docker пишет в /var/lib/docker/containers/*-json.log
+# без ограничений: у драйвера json-file ротация только по размеру, времени нет.
+# 20 МБ × 3 файла на сервис — потолок ~60 МБ вместо неограниченного роста.
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "20m"
+    max-file: "3"
+
+services:
+  app:
+    build: .
+    image: eltrea-bot:latest
+    container_name: eltrea-bot
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "8000:8000"
+    environment:
+      TZ: Europe/Moscow
+      # База реестра заявок. Лежит в volume, а не в образе: пересборка
+      # контейнера не должна стоить нам всей истории заявок.
+      REGISTRY_DB_PATH: /app/data/registry.db
+    env_file:
+      - .env
+    volumes:
+      - ./credentials.json:/app/credentials.json:ro
+      - ./logs:/app/logs
+      - registry-data:/app/data
+    networks:
+      - eltrea-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: eltrea-prometheus
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+    depends_on:
+      - app
+    networks:
+      - eltrea-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: eltrea-grafana
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - eltrea-net
+
+networks:
+  eltrea-net:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  registry-data:

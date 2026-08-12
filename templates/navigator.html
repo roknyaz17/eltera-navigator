@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Eltera Vacancy Navigator</title>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=PT+Serif:wght@700&display=swap");
+
+    :root {
+      color-scheme: dark;
+      --bg: #0f0f0f;
+      --panel: #121212;
+      --panel-2: #151311;
+      --ink: #f5f1ea;
+      --muted: #9c968e;
+      --line: #24211d;
+      --gold: #bb8e55;
+      --gold-2: #e0bd84;
+      --red: #d98575;
+      --green: #91c48c;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, Arial, sans-serif;
+    }
+
+    button, input, select { font: inherit; }
+
+    .app {
+      width: min(1320px, 100%);
+      margin: 0 auto;
+      padding: 18px 14px 34px;
+    }
+
+    .shell {
+      display: grid;
+      gap: 12px;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 210px minmax(0, 1fr) auto;
+      gap: 24px;
+      align-items: center;
+      min-height: 104px;
+      padding: 8px 0 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .brand img {
+      display: block;
+      width: 176px;
+      max-width: 100%;
+      height: auto;
+    }
+
+    h1, h2, h3, p { margin: 0; letter-spacing: 0; }
+
+    h1 {
+      font-size: clamp(24px, 2.8vw, 38px);
+      line-height: 1.05;
+      font-weight: 700;
+      max-width: 640px;
+    }
+
+    .lead {
+      margin-top: 8px;
+      max-width: 720px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .status {
+      display: grid;
+      gap: 8px;
+      min-width: 210px;
+      padding: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .status b {
+      color: var(--gold-2);
+      font-size: 14px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 340px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(18, 18, 18, .96);
+    }
+
+    .filters {
+      position: sticky;
+      top: 12px;
+      padding: 14px;
+    }
+
+    .filters h2,
+    .results-title h2 {
+      font-size: 18px;
+      line-height: 1.1;
+      font-weight: 650;
+    }
+
+    .form-grid {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .label {
+      color: #8d867d;
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    input, select {
+      width: 100%;
+      min-height: 40px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      outline: none;
+      background: #080808;
+      color: var(--ink);
+    }
+
+    input:focus, select:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(187, 142, 85, .14);
+    }
+
+    .field-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+
+    .btn {
+      min-height: 40px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: #151311;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .btn:hover {
+      border-color: var(--gold);
+      color: var(--gold-2);
+    }
+
+    .btn.primary {
+      border-color: var(--gold);
+      background: var(--gold);
+      color: #100d09;
+    }
+
+    .btn:disabled {
+      opacity: .62;
+      cursor: wait;
+    }
+
+    .results {
+      display: grid;
+      gap: 8px;
+    }
+
+    .results-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 13px 14px;
+    }
+
+    .count {
+      color: var(--gold-2);
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .card {
+      padding: 13px 14px;
+      border-color: #302c27;
+      background: #121110;
+    }
+
+    .card-top {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .title-line {
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+
+    .title-line h3 {
+      font-size: 17px;
+      line-height: 1.18;
+      font-weight: 700;
+    }
+
+    .city {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .rate {
+      min-width: 128px;
+      padding: 10px 12px;
+      border: 1px solid rgba(187, 142, 85, .55);
+      border-radius: 6px;
+      background: rgba(187, 142, 85, .12);
+      text-align: right;
+    }
+
+    .rate b {
+      display: block;
+      color: var(--gold-2);
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .rate span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 650;
+      text-transform: uppercase;
+    }
+
+    .facts {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .fact {
+      min-height: 54px;
+      padding: 8px 9px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: #0d0c0b;
+    }
+
+    .fact span {
+      display: block;
+      color: #877f77;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+
+    .fact b {
+      display: block;
+      margin-top: 4px;
+      font-size: 14px;
+      line-height: 1.25;
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .tag {
+      padding: 5px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #0a0a0a;
+      color: #d7d0c6;
+      font-size: 12px;
+    }
+
+    .tag.good { color: var(--green); border-color: rgba(145, 196, 140, .4); }
+    .tag.warn { color: var(--red); border-color: rgba(217, 133, 117, .42); }
+
+    details {
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid var(--line);
+    }
+
+    summary {
+      color: var(--gold-2);
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .details {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 10px;
+      color: #d7d0c6;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .details b { color: var(--ink); }
+
+    .empty, .error {
+      padding: 24px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .error { color: var(--red); }
+
+    .hint {
+      margin-top: 10px;
+      color: #827b73;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .toplinks {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .toplinks a {
+      color: var(--muted);
+      font-size: 12px;
+      text-decoration: none;
+      border-bottom: 1px dashed var(--line);
+    }
+
+    .toplinks a:hover { color: var(--gold-2); border-color: var(--gold); }
+
+    @media (max-width: 1080px) {
+      .topbar,
+      .layout { grid-template-columns: 1fr; }
+      .filters { position: static; }
+      .status { min-width: 0; }
+    }
+
+    @media (max-width: 720px) {
+      .app { padding: 10px 8px 26px; }
+      .topbar { min-height: 0; padding: 14px; }
+      .brand img { width: 152px; }
+      .field-row,
+      .facts,
+      .details,
+      .card-top { grid-template-columns: 1fr; }
+      .rate { text-align: left; }
+      .results-title { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <img src="/static/assets/eltera-logo-transparent.png" alt="Eltera">
+        </div>
+        <div>
+          <h1>Навигатор вакансий</h1>
+          <p class="lead">Подбор актуальных вакансий по параметрам кандидата. Сначала показываются самые дорогие варианты из активной базы.</p>
+          <p class="toplinks"><a href="/vacancies">Таблица (админ)</a></p>
+        </div>
+        <div class="status" aria-live="polite">
+          <span>База: <b id="sourceStatus">загрузка</b></span>
+          <span>Активных: <b id="activeCount">0</b></span>
+          <span>Обновлено: <b id="updatedAt">-</b></span>
+        </div>
+      </header>
+
+      <div class="layout">
+        <aside class="panel filters">
+          <h2>Параметры кандидата</h2>
+          <p class="lead">Оставлены только поля, которые нужны для первичного подбора.</p>
+
+          <form id="searchForm">
+            <div class="form-grid">
+              <label>
+                <span class="label">Город</span>
+                <input name="city" list="citiesList" placeholder="Москва, Владимир, Чехов">
+              </label>
+
+              <div class="field-row">
+                <label>
+                  <span class="label">Возраст</span>
+                  <input name="age" type="number" min="14" max="80" placeholder="35">
+                </label>
+
+                <label>
+                  <span class="label">Медкнижка</span>
+                  <select name="medicalBook">
+                    <option value="">Не важно</option>
+                    <option value="yes">Есть</option>
+                    <option value="no">Нет</option>
+                  </select>
+                </label>
+              </div>
+
+              <label>
+                <span class="label">Пол</span>
+                <select name="gender">
+                  <option value="">Не важно</option>
+                  <option value="male">Мужчина</option>
+                  <option value="female">Женщина</option>
+                  <option value="couple">Семейная пара</option>
+                </select>
+              </label>
+
+              <label>
+                <span class="label">Поиск</span>
+                <input name="vacancy" list="vacanciesList" placeholder="Кола, Ламода, разнорабочий, РФ/РБ…">
+              </label>
+
+              <label>
+                <span class="label">Источник</span>
+                <select name="source" id="sourceSelect">
+                  <option value="">Все источники</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="actions">
+              <button class="btn primary" type="submit">Найти вакансии</button>
+              <button class="btn" type="button" id="resetBtn">Сбросить</button>
+              <button class="btn" type="button" id="allBtn">Все активные</button>
+            </div>
+
+            <p class="hint">Источник данных — рабочая база бота (общий кеш вакансий). Если бэкенд недоступен, страница покажет демо-данные.</p>
+          </form>
+        </aside>
+
+        <section class="results">
+          <div class="panel results-title">
+            <div>
+              <h2>Лучшие варианты</h2>
+              <p class="lead">Сортировка по стоимости смены: дорогие вакансии идут первыми.</p>
+            </div>
+            <div class="count" id="resultCount">0 найдено</div>
+          </div>
+
+          <div class="list" id="results"></div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <datalist id="citiesList"></datalist>
+  <datalist id="vacanciesList"></datalist>
+
+  <script>
+    (function () {
+      var state = {
+        rows: [],
+        filtered: []
+      };
+
+      var form = document.getElementById("searchForm");
+      var results = document.getElementById("results");
+      var sourceStatus = document.getElementById("sourceStatus");
+      var activeCount = document.getElementById("activeCount");
+      var updatedAt = document.getElementById("updatedAt");
+      var resultCount = document.getElementById("resultCount");
+
+      function norm(value) {
+        return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+      }
+
+      function esc(value) {
+        return String(value == null ? "" : value).replace(/[&<>"']/g, function (char) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#039;" }[char];
+        });
+      }
+
+      function parseBool(value) {
+        return ["true", "да", "yes", "1"].indexOf(norm(value)) >= 0;
+      }
+
+      function money(value) {
+        var number = Number(String(value || "").replace(/[^\d.-]/g, ""));
+        return number ? number.toLocaleString("ru-RU") + " ₽" : "-";
+      }
+
+      function numeric(value) {
+        return Number(String(value || "").replace(/[^\d.-]/g, "")) || 0;
+      }
+
+      async function loadRows() {
+        try {
+          var response = await fetch("/api/vacancies", { headers: { "Accept": "application/json" } });
+          if (!response.ok) throw new Error("API unavailable");
+          var payload = await response.json();
+          var raw = Array.isArray(payload) ? payload : (payload.rows || []);
+          var rows = raw.filter(function (row) {
+            return parseBool(row.is_active) && norm(row.status) !== "закрыта";
+          });
+
+          if (!rows.length) throw new Error("No active rows");
+          sourceStatus.textContent = "подключена";
+          if (!Array.isArray(payload) && payload.updated_at) {
+            updatedAt.textContent = payload.updated_at;
+          }
+          return rows;
+        } catch (error) {
+          sourceStatus.textContent = "демо";
+          return demoRows();
+        }
+      }
+
+      function demoRows() {
+        return [
+          {
+            vacancy_id: "demo-1",
+            counterparty: "КПК",
+            vacancy_name: "Разнорабочий",
+            city: "Павлово",
+            region: "Нижегородская область",
+            object_name: "Производство",
+            work_format: "вахта",
+            schedule: "6/1 по 12 ч",
+            shift_rate: "4070",
+            gender: "мужчины",
+            age_from: "20",
+            age_to: "50",
+            need_men: "20",
+            need_women: "0",
+            need_couples: "0",
+            housing_available: "TRUE",
+            meals_available: "TRUE",
+            medical_book_required: "TRUE",
+            can_start_without_medical_book: "TRUE",
+            requirements: "Возраст 20-50 лет, РФ/РБ, наличие пищевой медкнижки",
+            advantages: "Обед на производстве, проживание",
+            risks: "Проезд не компенсируется",
+            source: "Демо",
+            is_active: "TRUE"
+          },
+          {
+            vacancy_id: "demo-2",
+            counterparty: "ФМ Чехов",
+            vacancy_name: "Комплектовщик",
+            city: "Чехов",
+            region: "Московская область",
+            work_format: "вахта",
+            schedule: "вахта от 30 смен",
+            shift_rate: "3520",
+            gender: "любые",
+            age_to: "45",
+            need_men: "11",
+            need_women: "13",
+            need_couples: "2",
+            housing_available: "TRUE",
+            meals_available: "TRUE",
+            medical_book_required: "",
+            requirements: "РФ до 45 лет, опыт работы с ТСД",
+            advantages: "Бесплатный обед, доп. часы при перевыполнении",
+            sb_policy: "выборочная",
+            source: "Демо",
+            is_active: "TRUE"
+          },
+          {
+            vacancy_id: "demo-3",
+            counterparty: "БИГ",
+            vacancy_name: "Работник линии производства косметики",
+            city: "Троицк",
+            region: "Москва",
+            work_format: "вахта",
+            schedule: "вахта от 20 смен",
+            shift_rate: "3300",
+            gender: "женщины",
+            age_to: "57",
+            need_men: "0",
+            need_women: "5",
+            need_couples: "0",
+            meals_available: "TRUE",
+            meals_free: "TRUE",
+            medical_book_required: "",
+            requirements: "РФ/РБ до 57 лет",
+            advantages: "Бесплатный обед, проверки СБ нет",
+            source: "Демо",
+            is_active: "TRUE"
+          }
+        ];
+      }
+
+      function allowedByGender(row, gender) {
+        if (!gender) return true;
+        var rowGender = norm(row.gender);
+        var men = numeric(row.need_men);
+        var women = numeric(row.need_women);
+        var couples = numeric(row.need_couples);
+
+        if (gender === "couple") return couples > 0 || rowGender.indexOf("сем") >= 0 || rowGender.indexOf("люб") >= 0;
+        if (gender === "male") return men > 0 || rowGender.indexOf("муж") >= 0 || rowGender.indexOf("люб") >= 0 || rowGender.indexOf("м/ж") >= 0;
+        if (gender === "female") return women > 0 || rowGender.indexOf("жен") >= 0 || rowGender.indexOf("люб") >= 0 || rowGender.indexOf("м/ж") >= 0;
+        return true;
+      }
+
+      function allowedByAge(row, age) {
+        if (!age) return true;
+        var from = numeric(row.age_from);
+        var to = numeric(row.age_to);
+        return (!from || age >= from) && (!to || age <= to);
+      }
+
+      function allowedByMedical(row, medicalBook) {
+        if (!medicalBook) return true;
+        var required = parseBool(row.medical_book_required);
+        var canStartWithout = parseBool(row.can_start_without_medical_book);
+        if (medicalBook === "yes") return true;
+        return !required || canStartWithout;
+      }
+
+      // Полнотекстовый индекс по всем смысловым полям вакансии, включая
+      // исходное сообщение. На больших датасетах считать его на каждое
+      // нажатие «Найти» накладно, поэтому при загрузке мы один раз
+      // материализуем row._fullText (см. enrichRows()).
+      var FULLTEXT_FIELDS = [
+        "vacancy_name", "vacancy_category", "duties", "requirements",
+        "counterparty", "object_name", "object_address",
+        "city", "region",
+        "schedule", "shift_type", "work_format", "shift_rate",
+        "gender", "citizenship_requirements",
+        "advantages", "risks", "sb_policy",
+        "housing_conditions", "meals_times_per_day",
+        "recruiter_comment", "sales_script", "objections",
+        "source", "responsible_manager",
+        "original_message"
+      ];
+
+      function buildFullText(row) {
+        var parts = [];
+        for (var i = 0; i < FULLTEXT_FIELDS.length; i++) {
+          var value = row[FULLTEXT_FIELDS[i]];
+          if (value) parts.push(value);
+        }
+        return norm(parts.join(" "));
+      }
+
+      function matches(row, filters) {
+        var cityText = norm([row.city, row.region, row.object_name, row.object_address].join(" "));
+
+        if (filters.city && cityText.indexOf(norm(filters.city)) < 0) return false;
+
+        if (filters.vacancy) {
+          // Полнотекстовый поиск: запрос «кола ламода» = AND по словам.
+          // Каждое слово должно встретиться где-то в индексе вакансии.
+          var haystack = row._fullText || buildFullText(row);
+          var tokens = norm(filters.vacancy).split(/\s+/).filter(Boolean);
+          for (var t = 0; t < tokens.length; t++) {
+            if (haystack.indexOf(tokens[t]) < 0) return false;
+          }
+        }
+
+        if (filters.source && norm(row.source) !== norm(filters.source)) return false;
+        if (!allowedByGender(row, filters.gender)) return false;
+        if (!allowedByAge(row, Number(filters.age) || 0)) return false;
+        if (!allowedByMedical(row, filters.medicalBook)) return false;
+
+        return true;
+      }
+
+      function collectFilters() {
+        var data = new FormData(form);
+        return {
+          city: String(data.get("city") || "").trim(),
+          age: String(data.get("age") || "").trim(),
+          medicalBook: String(data.get("medicalBook") || ""),
+          gender: String(data.get("gender") || ""),
+          vacancy: String(data.get("vacancy") || "").trim(),
+          source: String(data.get("source") || "").trim()
+        };
+      }
+
+      function sortByRate(rows) {
+        return rows.slice().sort(function (a, b) {
+          return numeric(b.shift_rate) - numeric(a.shift_rate) || norm(a.vacancy_name).localeCompare(norm(b.vacancy_name), "ru");
+        });
+      }
+
+      function applyFilters(filters) {
+        state.filtered = sortByRate(state.rows.filter(function (row) {
+          return matches(row, filters);
+        }));
+        render();
+      }
+
+      function fact(label, value) {
+        return '<div class="fact"><span>' + esc(label) + '</span><b>' + esc(value || "-") + '</b></div>';
+      }
+
+      function tag(label, value, goodWhenTrue) {
+        var hasValue = value !== "" && value != null;
+        var isTrue = parseBool(value);
+        var cls = goodWhenTrue && isTrue ? " good" : "";
+        if (goodWhenTrue && hasValue && !isTrue) cls = " warn";
+        return '<span class="tag' + cls + '">' + esc(label) + ': ' + esc(hasValue ? prettyValue(value) : "-") + '</span>';
+      }
+
+      function prettyValue(value) {
+        if (parseBool(value)) return "да";
+        if (["false", "нет", "no", "0"].indexOf(norm(value)) >= 0) return "нет";
+        return value;
+      }
+
+      function card(row) {
+        var place = [row.city, row.region].filter(Boolean).join(", ");
+        var need = [
+          numeric(row.need_men) ? "мужчин: " + numeric(row.need_men) : "",
+          numeric(row.need_women) ? "женщин: " + numeric(row.need_women) : "",
+          numeric(row.need_couples) ? "пар: " + numeric(row.need_couples) : ""
+        ].filter(Boolean).join(", ") || row.need_total || "-";
+
+        return '<article class="panel card">' +
+          '<div class="card-top">' +
+            '<div>' +
+              '<div class="title-line"><h3>' + esc(row.vacancy_name || "Вакансия") + '</h3><span class="city">' + esc(place || row.object_name || "") + '</span></div>' +
+              '<p class="lead">' + esc([row.counterparty, row.object_name, row.work_format].filter(Boolean).join(" · ")) + '</p>' +
+            '</div>' +
+            '<div class="rate"><b>' + money(row.shift_rate) + '</b><span>за смену</span></div>' +
+          '</div>' +
+          '<div class="facts">' +
+            fact("график", row.schedule || row.shift_type) +
+            fact("возраст", ageText(row)) +
+            fact("потребность", need) +
+            fact("источник", row.source) +
+          '</div>' +
+          '<div class="tags">' +
+            tag("медкнижка", row.medical_book_required, false) +
+            tag("старт без МК", row.can_start_without_medical_book, true) +
+            tag("проживание", row.housing_available, true) +
+            tag("питание", row.meals_available, true) +
+            tag("СБ", row.sb_policy || row.risks, false) +
+          '</div>' +
+          '<details>' +
+            '<summary>Подробнее</summary>' +
+            '<div class="details">' +
+              '<div><b>Требования</b><br>' + esc(row.requirements || "-") + '</div>' +
+              '<div><b>Преимущества</b><br>' + esc(row.advantages || "-") + '</div>' +
+              '<div><b>Адрес / объект</b><br>' + esc([row.object_name, row.object_address].filter(Boolean).join(", ") || "-") + '</div>' +
+              '<div><b>Комментарий</b><br>' + esc(row.recruiter_comment || row.sales_script || row.original_message || "-") + '</div>' +
+            '</div>' +
+          '</details>' +
+        '</article>';
+      }
+
+      function ageText(row) {
+        var from = numeric(row.age_from);
+        var to = numeric(row.age_to);
+        if (from && to) return from + "-" + to;
+        if (from) return "от " + from;
+        if (to) return "до " + to;
+        return "-";
+      }
+
+      function render() {
+        resultCount.textContent = state.filtered.length + " найдено";
+        if (!state.filtered.length) {
+          results.innerHTML = '<div class="panel empty">Подходящих вакансий не найдено. Попробуйте изменить город, возраст, пол или медкнижку.</div>';
+          return;
+        }
+        results.innerHTML = state.filtered.map(card).join("");
+      }
+
+      function fillDatalists() {
+        var cities = unique(state.rows.flatMap(function (row) {
+          return [row.city, row.region].filter(Boolean);
+        }));
+        var vacancies = unique(state.rows.map(function (row) { return row.vacancy_name; }).filter(Boolean));
+
+        document.getElementById("citiesList").innerHTML = cities.map(function (item) {
+          return '<option value="' + esc(item) + '">';
+        }).join("");
+        document.getElementById("vacanciesList").innerHTML = vacancies.map(function (item) {
+          return '<option value="' + esc(item) + '">';
+        }).join("");
+
+        var sources = unique(state.rows.map(function (row) { return row.source; }).filter(Boolean));
+        var sourceSelect = document.getElementById("sourceSelect");
+        var current = sourceSelect.value;
+        sourceSelect.innerHTML = '<option value="">Все источники</option>' + sources.map(function (item) {
+          return '<option value="' + esc(item) + '">' + esc(item) + '</option>';
+        }).join("");
+        sourceSelect.value = current;
+      }
+
+      function unique(values) {
+        var seen = {};
+        return values.filter(function (value) {
+          var key = norm(value);
+          if (!key || seen[key]) return false;
+          seen[key] = true;
+          return true;
+        }).sort(function (a, b) { return a.localeCompare(b, "ru"); });
+      }
+
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        applyFilters(collectFilters());
+      });
+
+      document.getElementById("resetBtn").addEventListener("click", function () {
+        form.reset();
+        applyFilters({});
+      });
+
+      document.getElementById("allBtn").addEventListener("click", function () {
+        state.filtered = sortByRate(state.rows);
+        render();
+      });
+
+      loadRows().then(function (rows) {
+        // Один раз материализуем полнотекстовый индекс по каждой вакансии.
+        // Это позволяет matches() работать в O(длина_запроса), а не пересобирать
+        // склейку полей на каждое нажатие «Найти».
+        for (var i = 0; i < rows.length; i++) {
+          rows[i]._fullText = buildFullText(rows[i]);
+        }
+        state.rows = rows;
+        state.filtered = sortByRate(rows);
+        activeCount.textContent = rows.length;
+        if (updatedAt.textContent === "-") {
+          updatedAt.textContent = new Date().toLocaleString("ru-RU");
+        }
+        fillDatalists();
+        render();
+      }).catch(function () {
+        sourceStatus.textContent = "ошибка";
+        results.innerHTML = '<div class="panel error">Не удалось загрузить данные вакансий.</div>';
+      });
+    })();
+  </script>
+</body>
+</html>

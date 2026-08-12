@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Реестр заявок — Eltrea</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" defer></script>
+    <style>
+        body { padding: 16px 24px; }
+        .table-registry td { vertical-align: middle; font-size: 0.88rem; }
+        .table-registry th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+        .table-registry th a { color: inherit; text-decoration: none; }
+        .table-registry th a:hover { color: #0d6efd; text-decoration: underline; }
+        .table-registry th.sorted a { color: #0d6efd; }
+        .nowrap { white-space: nowrap; }
+        .ellipsis { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .inactive-row { opacity: 0.5; }
+        .req-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
+        /* Пустое поле должно быть видно как пустое, а не как «может, ноль». */
+        .empty { color: #c9ccd1; }
+        .filters-row { gap: 8px; row-gap: 10px; }
+        .stats-bar { font-size: 0.85rem; color: #6c757d; }
+        .raw-text { white-space: pre-wrap; font-size: 0.82rem; background: #f8f9fa;
+                    border: 1px solid #e9ecef; border-radius: 6px; padding: 10px; max-height: 60vh; overflow: auto; }
+        .field-grid { display: grid; grid-template-columns: 40% 60%; gap: 2px 10px; font-size: 0.85rem; }
+        .field-grid dt { color: #6c757d; font-weight: 500; }
+        .field-grid dd { margin: 0; }
+        .gap-badge { font-size: 0.7rem; }
+    </style>
+</head>
+<body>
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <div class="d-flex align-items-center gap-3">
+        <h1 class="h3 mb-0">Реестр заявок</h1>
+        <a href="/registry/manual" class="btn btn-sm btn-outline-primary">+ Заявка вручную</a>
+        <a href="/registry/dictionaries" class="btn btn-sm btn-outline-secondary">
+            Справочники
+            {% if overview.dict_pending %}<span class="badge bg-warning text-dark">{{ overview.dict_pending }}</span>{% endif %}
+        </a>
+    </div>
+    <div class="stats-bar">
+        Найдено: <strong>{{ total }}</strong> из {{ overview.active }} активных ·
+        заявок: {{ overview.requests }}{% if overview.failed %} · <span class="text-danger">не разобрано: {{ overview.failed }}</span>{% endif %} ·
+        обновлено: {{ overview.updated_at[:16].replace('T', ' ') }}
+    </div>
+</div>
+
+<form method="get" action="/registry" class="row filters-row mb-3 align-items-end">
+    <div class="col-md-3">
+        <label class="form-label small mb-1">Поиск по всему</label>
+        <input type="search" name="q" class="form-control form-control-sm"
+               placeholder="должность, объект, город, текст заявки…" value="{{ filters.q or '' }}">
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Контрагент</label>
+        <select name="counterparty" class="form-select form-select-sm">
+            <option value="">— все —</option>
+            {% for v in facets.counterparties %}
+            <option value="{{ v }}" {% if filters.counterparty == v %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Источник</label>
+        <select name="source" class="form-select form-select-sm">
+            <option value="">— все —</option>
+            {% for v in facets.sources %}
+            <option value="{{ v }}" {% if filters.source == v %}selected{% endif %}>{{ source_titles.get(v, v) }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Город</label>
+        <input type="text" name="city" class="form-control form-control-sm" value="{{ filters.city or '' }}">
+    </div>
+    <div class="col-md-3">
+        <label class="form-label small mb-1">Ставка, ₽/смена</label>
+        <div class="input-group input-group-sm">
+            <input type="number" name="rate_min" class="form-control" placeholder="от" value="{{ filters.rate_min or '' }}">
+            <input type="number" name="rate_max" class="form-control" placeholder="до" value="{{ filters.rate_max or '' }}">
+        </div>
+    </div>
+
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Должность</label>
+        <input type="text" name="vacancy_name" class="form-control form-control-sm" value="{{ filters.vacancy_name or '' }}">
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Смен не больше</label>
+        <select name="max_shifts" class="form-select form-select-sm">
+            <option value="">— любой —</option>
+            {% for v in shifts_options %}
+            <option value="{{ v }}" {% if filters.max_shifts == v %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Смена</label>
+        <select name="shift_type" class="form-select form-select-sm">
+            <option value="">— любая —</option>
+            <option value="day" {% if filters.shift_type == 'day' %}selected{% endif %}>день</option>
+            <option value="night" {% if filters.shift_type == 'night' %}selected{% endif %}>ночь</option>
+            <option value="mixed" {% if filters.shift_type == 'mixed' %}selected{% endif %}>смешанная</option>
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">СБ</label>
+        <select name="sb_policy" class="form-select form-select-sm">
+            <option value="">— любая —</option>
+            {% for v in facets.sb_policies %}
+            <option value="{{ v }}" {% if filters.sb_policy == v %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Активность</label>
+        <select name="is_active" class="form-select form-select-sm">
+            <option value="true" {% if filters.is_active == 'true' %}selected{% endif %}>только активные</option>
+            <option value="false" {% if filters.is_active == 'false' %}selected{% endif %}>только закрытые</option>
+            <option value="all" {% if filters.is_active == 'all' %}selected{% endif %}>все</option>
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-1">Поступила</label>
+        <div class="input-group input-group-sm">
+            <input type="date" name="date_from" class="form-control" value="{{ filters.date_from or '' }}">
+            <input type="date" name="date_to" class="form-control" value="{{ filters.date_to or '' }}">
+        </div>
+    </div>
+
+    <div class="col-md-4 d-flex align-items-center gap-3">
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="has_gaps" value="1"
+                   id="has_gaps" {% if filters.has_gaps %}checked{% endif %}>
+            <label class="form-check-label small" for="has_gaps">есть незаполненные поля</label>
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="needs_review" value="1"
+                   id="needs_review" {% if filters.needs_review %}checked{% endif %}>
+            <label class="form-check-label small" for="needs_review">заявка не разобрана</label>
+        </div>
+    </div>
+    <div class="col-md-8 d-flex gap-2 justify-content-end">
+        <button type="submit" class="btn btn-sm btn-primary">Показать</button>
+        <a href="/registry" class="btn btn-sm btn-outline-secondary">Сбросить</a>
+        <a href="/registry/export.csv?{{ export_qs }}" class="btn btn-sm btn-outline-success">Выгрузить CSV</a>
+    </div>
+</form>
+
+{% macro sortable_th(col, label, extra='') -%}
+<th class="{{ extra }} {% if sort == col %}sorted{% endif %}">
+    <a href="{{ sort_link(col) }}">{{ label }}{{ sort_arrow(col) }}</a>
+</th>
+{%- endmacro %}
+
+{% macro cell(value, suffix='') -%}
+{% if value is none or value == '' %}<span class="empty">—</span>{% else %}{{ value }}{{ suffix }}{% endif %}
+{%- endmacro %}
+
+{% if items %}
+<div class="table-responsive">
+    <table class="table table-sm table-hover table-registry align-middle">
+        <thead class="table-light">
+        <tr>
+            {{ sortable_th('position_id', 'ID') }}
+            {{ sortable_th('counterparty', 'Контрагент') }}
+            {{ sortable_th('vacancy_name', 'Должность') }}
+            {{ sortable_th('city', 'Город / Объект') }}
+            {{ sortable_th('shift_rate', 'Ставка', 'text-end') }}
+            <th>График</th>
+            {{ sortable_th('min_shifts', 'Смен от', 'text-center') }}
+            {{ sortable_th('shift_type', 'Смена') }}
+            {{ sortable_th('need_total', 'Потребность', 'text-center') }}
+            <th>Требования</th>
+            {{ sortable_th('sb_policy', 'СБ') }}
+            {{ sortable_th('source', 'Источник') }}
+            {{ sortable_th('last_seen_at', 'Обновлено') }}
+            {{ sortable_th('status', 'Статус') }}
+            <th class="text-center">Сверка</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for v in items %}
+        <tr class="{% if not v.is_active %}inactive-row{% endif %}">
+            <td class="req-id">
+                <a href="/registry/{{ v.request_id }}" title="Открыть заявку">{{ v.position_id }}</a>
+            </td>
+            <td class="ellipsis" title="{{ v.counterparty }}">{{ cell(v.counterparty) }}</td>
+            <td class="ellipsis" title="{{ v.vacancy_name }}">{{ cell(v.vacancy_name) }}</td>
+            <td class="ellipsis">
+                <div>{{ cell(v.city) }}</div>
+                {% if v.object_name %}<div class="text-muted small">{{ v.object_name }}</div>{% endif %}
+            </td>
+            <td class="text-end nowrap">
+                {% if v.shift_rate %}{{ v.shift_rate }} ₽
+                {% elif v.hourly_rate %}{{ v.hourly_rate }} ₽/ч
+                {% else %}<span class="empty">—</span>{% endif %}
+            </td>
+            <td class="ellipsis" title="{{ v.schedule }}">{{ cell(v.work_pattern or v.schedule) }}</td>
+            <td class="text-center">{{ cell(v.min_shifts) }}</td>
+            <td>
+                {% if v.shift_type == 'day' %}<span class="badge bg-warning text-dark">день</span>
+                {% elif v.shift_type == 'night' %}<span class="badge bg-dark">ночь</span>
+                {% elif v.shift_type == 'mixed' %}<span class="badge bg-info text-dark">смеш.</span>
+                {% else %}<span class="empty">—</span>{% endif %}
+            </td>
+            <td class="text-center nowrap">
+                {% if v.need_total is not none %}<strong>{{ v.need_total }}</strong>{% else %}<span class="empty">—</span>{% endif %}
+                {% if v.need_men or v.need_women or v.need_couples %}
+                <div class="text-muted small">
+                    {{ v.need_men or 0 }}м / {{ v.need_women or 0 }}ж{% if v.need_couples %} / {{ v.need_couples }}сем{% endif %}
+                </div>
+                {% endif %}
+            </td>
+            <td class="ellipsis" title="{{ v.requirements }}">{{ cell(v.requirements) }}</td>
+            <td class="ellipsis">{{ cell(v.sb_policy) }}</td>
+            <td class="nowrap">
+                {% if v.source_url %}
+                <a href="{{ v.source_url }}" target="_blank" rel="noopener" class="badge bg-secondary text-decoration-none">{{ v.source_name }} ↗</a>
+                {% else %}
+                <span class="badge bg-secondary">{{ v.source_name }}</span>
+                {% endif %}
+            </td>
+            <td class="nowrap small text-muted">{{ v.last_seen_at[:10] }}</td>
+            <td class="ellipsis">{{ cell(v.status) }}</td>
+            <td class="text-center">
+                <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2 js-compare"
+                        data-position="{{ v.position_id }}" title="Как пришло / как распозналось">📄</button>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if total_pages > 1 %}
+<nav>
+    <ul class="pagination pagination-sm">
+        <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+            <a class="page-link" href="?{{ pagination_qs(page - 1) }}">Назад</a>
+        </li>
+        <li class="page-item disabled"><span class="page-link">{{ page }} / {{ total_pages }}</span></li>
+        <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
+            <a class="page-link" href="?{{ pagination_qs(page + 1) }}">Вперёд</a>
+        </li>
+    </ul>
+</nav>
+{% endif %}
+
+{% else %}
+<div class="alert alert-info">Ничего не нашлось под текущие фильтры.</div>
+{% endif %}
+
+<div class="modal fade" id="compareModal" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Как пришло / Как распозналось</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="compareBody">
+                <div class="text-muted">Загружаю…</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener("click", async function (event) {
+        var button = event.target.closest(".js-compare");
+        if (!button) return;
+        var modal = bootstrap.Modal.getOrCreateInstance(document.getElementById("compareModal"));
+        var body = document.getElementById("compareBody");
+        body.innerHTML = '<div class="text-muted">Загружаю…</div>';
+        modal.show();
+        try {
+            var response = await fetch("/registry/position/" + button.dataset.position);
+            body.innerHTML = await response.text();
+        } catch (err) {
+            body.innerHTML = '<div class="alert alert-danger">Не удалось загрузить: ' + err + "</div>";
+        }
+    });
+</script>
+
+</body>
+</html>
