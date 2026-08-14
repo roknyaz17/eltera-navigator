@@ -141,10 +141,17 @@ class VacancyParserService:
     Если потребность указана как "N человек" / "N чел" / "нужно N" БЕЗ разбивки по полу (например, "Клининг - 10 человек, Ж до 55 лет, М до 45 лет" — здесь 10 это потребность, а "Ж до 55, М до 45" — требования к возрасту по полам), ставь need_total=N и НЕ выставляй need_men/need_women/need_couples.
 
     Правило 3 (День и ночь — это РАЗНЫЕ вакансии):
-    Если в одном блоке есть и дневные, и ночные смены с РАЗНОЙ потребностью или ставкой (например, Миксит: "ночь: 6 ж 2 м / день: 8 ж 3 м"), верни ДВА отдельных JSON-объекта: один с shift_type="day", второй с shift_type="night", в каждом свои need_men/need_women.
+    Если в одном блоке есть и дневные, и ночные смены с РАЗНОЙ потребностью или ставкой (например, Миксит: "ночь: 6 ж 2 м / день: 8 ж 3 м"), верни ДВА отдельных JSON-объекта: один с shift_type="day", второй с shift_type="night", в каждом свои need_men/need_women. Правило работает по тексту самой заявки, даже если справка по проекту описывает смены иначе.
 
     Правило 4 (Должность не указана):
     Если в тексте есть только название объекта/компании/проекта (например, "Стеллар гласс - 5 М до 50 лет, ставка 3000") без должности, положи название в object_name, а vacancy_name НЕ выдумывай — пропусти поле.
+
+    СПРАВКА ПО ПРОЕКТУ (приходит не всегда — только если проект нашёлся в базе знаний контрагента; тогда она идёт после текста заявки, отдельным блоком):
+    - Справка — это постоянное описание проекта (адрес, что за производство, часы смены, проживание, питание, форма, медкнижка). Заявкой она НЕ является и позиций не создаёт.
+    - Позиции заводятся ТОЛЬКО по тексту заявки. Если в справке перечислены должности, которых в заявке нет, — не добавляй их. Если заявка просит одну должность из пяти описанных — вернёшь одну.
+    - Заявка ГЛАВНЕЕ справки. Потребность (сколько человек), ставка, возраст, гражданство, сроки вахты, даты заселения — только из заявки. Расходятся цифры — верна заявка: справка пишется один раз, а пост присылают сегодня.
+    - Справка заполняет ровно те поля, о которых заявка молчит: object_address, schedule, shift_hours, shift_type, duties, requirements, housing_*, meals_*, uniform_*, medical_book_*, requires_tsd, transport_*, advantages, risks.
+    - Правило «не додумывать» действует и для справки: нет данных ни там, ни там — поля в JSON нет.
 
     Примеры:
     Пример 1 (не вакансия):
@@ -168,6 +175,15 @@ class VacancyParserService:
     Теперь разбери текст заявки:
     {message}
     """
+
+    # Шапка справки. Сама справка подставляется ПОСЛЕ текста заявки (см.
+    # prompt_template): при подстановке в системный промпт, до заявки, модель
+    # берёт из неё заметно меньше — проверено на 25 реальных постах, 474
+    # заполненных поля против 566.
+    CONTEXT_HEADER = (
+        "СПРАВКА ПО ПРОЕКТУ из базы знаний контрагента (не заявка, позиций не создаёт, "
+        "при расхождении цифр верна заявка):\n"
+    )
 
     def __init__(
             self,
@@ -200,8 +216,11 @@ class VacancyParserService:
         )
         self.prompt_template = ChatPromptTemplate.from_messages([
             ("system", self.SYSTEM_PROMPT),
-            ("human", "{message}")
+            ("human", "{message}{context_block}")
         ])
+        # Сколько разборов прошло со справкой по проекту — видно в логе прогона
+        # рядом с расходом токенов.
+        self.context_hits = 0
         # Цепочка БЕЗ StrOutputParser — нам нужен сырой AIMessage,
         # чтобы достать usage_metadata.
         self.chain = self.prompt_template | self.llm
@@ -236,14 +255,25 @@ class VacancyParserService:
             content = str(content)
         return content, tokens_in, tokens_out
 
-    def _invoke_llm(self, text: str) -> str:
-        return self._record_usage(self.chain.invoke({"message": text}))[0]
+    def _context_block(self, context: Optional[str]) -> str:
+        """Справка по проекту в виде куска промпта. Нет справки — пустая строка."""
+        if not context or not context.strip():
+            return ""
+        self.context_hits += 1
+        return f"\n\n{self.CONTEXT_HEADER}{context.strip()}"
 
-    async def _ainvoke_llm(self, text: str) -> str:
-        return (await self._ainvoke_llm_ex(text))[0]
+    def _invoke_llm(self, text: str, context: Optional[str] = None) -> str:
+        payload = {"message": text, "context_block": self._context_block(context)}
+        return self._record_usage(self.chain.invoke(payload))[0]
 
-    async def _ainvoke_llm_ex(self, text: str) -> Tuple[str, int, int]:
-        return self._record_usage(await self.chain.ainvoke({"message": text}))
+    async def _ainvoke_llm(self, text: str, context: Optional[str] = None) -> str:
+        return (await self._ainvoke_llm_ex(text, context))[0]
+
+    async def _ainvoke_llm_ex(
+            self, text: str, context: Optional[str] = None,
+    ) -> Tuple[str, int, int]:
+        payload = {"message": text, "context_block": self._context_block(context)}
+        return self._record_usage(await self.chain.ainvoke(payload))
 
     @staticmethod
     def _extract_json_array(raw: str) -> Optional[str]:
@@ -313,7 +343,7 @@ class VacancyParserService:
             v["vacancy_id"] = make_vacancy_id(v)
         return data
 
-    def parse(self, text: str, source: str = "ВахтаПро", source_url: str = "") -> List[Dict]:
+    def parse(self, text: str, source: str = "Градус", source_url: str = "") -> List[Dict]:
         """
         Парсит текст сообщения и возвращает список вакансий.
 
@@ -338,14 +368,20 @@ class VacancyParserService:
 
         return self._enrich(data, source, source_url)
 
-    async def aparse(self, text: str, source: str = "ВахтаПро", source_url: str = "") -> List[Dict]:
+    async def aparse(
+            self,
+            text: str,
+            source: str = "Градус",
+            source_url: str = "",
+            context: Optional[str] = None,
+    ) -> List[Dict]:
         """Асинхронная версия parse() — для параллельной обработки сегментов."""
-        data = await self.aparse_raw(text)
+        data = await self.aparse_raw(text, context)
         if data is None:
             return []
         return self._enrich(data, source, source_url)
 
-    async def aparse_raw(self, text: str) -> Optional[List[Dict]]:
+    async def aparse_raw(self, text: str, context: Optional[str] = None) -> Optional[List[Dict]]:
         """Разбор без служебных полей — путь реестра.
 
         Отличие от aparse(): не подмешивает created_at/source/is_active и
@@ -353,21 +389,41 @@ class VacancyParserService:
         различает «модель не справилась» (None) и «вакансий в тексте нет» ([]).
         Второе — нормальная ситуация для служебных сообщений в канале, и
         помечать её как ошибку разбора не нужно.
-        """
-        return (await self.aparse_raw_ex(text))[0]
 
-    async def aparse_raw_ex(self, text: str) -> Tuple[Optional[List[Dict]], int, int]:
+        :param context: справка по проекту из базы знаний (см. project_kb.py).
+            Дополняет поля, о которых заявка молчит, и никогда не спорит с ней.
+        """
+        return (await self.aparse_raw_ex(text, context))[0]
+
+    async def aparse_raw_ex(
+            self, text: str, context: Optional[str] = None,
+    ) -> Tuple[Optional[List[Dict]], int, int]:
         """aparse_raw() + расход токенов на этот конкретный разбор."""
         last_raw = ""
         tokens_in = tokens_out = 0
         for attempt in range(self.MAX_RETRIES + 1):
-            raw_json, t_in, t_out = await self._ainvoke_llm_ex(text)
+            raw_json, t_in, t_out = await self._ainvoke_llm_ex(text, context)
             tokens_in += t_in
             tokens_out += t_out
             last_raw = raw_json
             parsed = self._try_parse_raw(raw_json, attempt)
-            if parsed is not None:
-                return parsed, tokens_in, tokens_out
+            if parsed is None:
+                continue
+            if context and not parsed:
+                # Справка может только дополнять. Если со справкой модель
+                # решила, что вакансий нет, — перепроверяем по голому посту:
+                # на одной заявке из ста длинное описание проекта уводит
+                # разбор в пустой ответ, и позиция теряется целиком.
+                fallback, f_in, f_out = await self.aparse_raw_ex(text, None)
+                tokens_in += f_in
+                tokens_out += f_out
+                if fallback:
+                    logger.warning(
+                        "Со справкой разбор вернул пусто, без неё — "
+                        f"{len(fallback)} позиц.; беру разбор без справки"
+                    )
+                    return fallback, tokens_in, tokens_out
+            return parsed, tokens_in, tokens_out
 
         logger.error(
             f"Парсер не справился после {self.MAX_RETRIES + 1} попыток, "

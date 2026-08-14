@@ -175,6 +175,192 @@ CREATE VIRTUAL TABLE search_index USING fts5(
 );
 """)
 
+# --- v2: ставки рекрутера ----------------------------------------------------
+#
+# Слой мотивации рекрутера. Из заявок он не приходит и приходить не может:
+# это внутренняя договорённость с контрагентом. Поэтому отдельная таблица, а не
+# колонка в positions, и заполняется она руками. Пусто — «ставка не задана»,
+# додумывать процент от ставки кандидата нельзя.
+MIGRATIONS.append("""
+CREATE TABLE recruiter_rates (
+    counterparty TEXT PRIMARY KEY,
+    kind         TEXT NOT NULL DEFAULT 'fixed',   -- fixed | percent
+    value        REAL,                            -- рубли для fixed, проценты для percent
+    base_amount  INTEGER,                         -- оплата контрагента за кандидата
+    base         TEXT NOT NULL DEFAULT '',        -- словами: за что платят
+    rule         TEXT NOT NULL DEFAULT '',        -- условие начисления: «10 смен»
+    stage        TEXT NOT NULL DEFAULT '',        -- этап выплаты
+    guar         TEXT NOT NULL DEFAULT '',        -- гарантийный период
+    updated_at   TEXT NOT NULL DEFAULT ''
+);
+""")
+
+
+# --- v3: база знаний по проектам с Яндекс.Диска -------------------------------
+#
+# Индекс папок контрагента: одна строка — один проект. Живёт в реестре, а не в
+# отдельном файле, потому что разбор заявки обязан читать его без сети — диск
+# обновляется своим расписанием, прогон идёт своим.
+MIGRATIONS.append("""
+CREATE TABLE disk_projects (
+    path        TEXT PRIMARY KEY,          -- путь папки внутри публичной ссылки
+    source      TEXT NOT NULL DEFAULT '',  -- чей диск (алиас источника)
+    category    TEXT NOT NULL DEFAULT '',  -- раздел верхнего уровня
+    name        TEXT NOT NULL,             -- имя папки как есть, с галочками
+    title       TEXT NOT NULL DEFAULT '',  -- то же без эмодзи — его видит человек
+    tokens      TEXT NOT NULL DEFAULT '',  -- нормализованные токены названия
+    url         TEXT NOT NULL DEFAULT '',  -- ссылка на папку для карточки заявки
+    doc_text    TEXT NOT NULL DEFAULT '',  -- склеенный текст описаний проекта
+    docs        TEXT NOT NULL DEFAULT '[]',   -- JSON: файлы папки
+    albums      TEXT NOT NULL DEFAULT '[]',   -- JSON: фотоальбомы и число фото
+    photos      INTEGER NOT NULL DEFAULT 0,
+    modified    TEXT NOT NULL DEFAULT '',
+    fingerprint TEXT NOT NULL DEFAULT '',  -- отпечаток содержимого папки
+    indexed_at  TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX idx_disk_projects_source ON disk_projects(source);
+""")
+
+
+# --- v4: ссылка позиции на папку проекта + переименование ВахтаПро → Градус ---
+#
+# Кнопка «Фото объекта» в /navigator ведёт в папку проекта на Яндекс.Диске.
+# Связь хранится отдельной таблицей, а не колонкой в positions: она не приходит
+# из заявки, её не редактирует менеджер и она пересчитывается при каждом обходе
+# диска — в истории изменений позиции ей делать нечего.
+MIGRATIONS.append("""
+CREATE TABLE position_kb (
+    position_id TEXT PRIMARY KEY REFERENCES positions(position_id) ON DELETE CASCADE,
+    source      TEXT NOT NULL DEFAULT '',
+    project     TEXT NOT NULL DEFAULT '',   -- название папки проекта
+    path        TEXT NOT NULL DEFAULT '',   -- путь внутри публичной ссылки
+    folder_url  TEXT NOT NULL DEFAULT '',   -- папка проекта целиком
+    photos_url  TEXT NOT NULL DEFAULT '',   -- куда ведёт кнопка «Фото объекта»
+    photos      INTEGER NOT NULL DEFAULT 0,
+    score       REAL NOT NULL DEFAULT 0,    -- уверенность сопоставления
+    linked_at   TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX idx_position_kb_source ON position_kb(source);
+
+-- Контрагент переименовался. Ключ источника (vahtapro) остаётся прежним, а имя,
+-- которое видят люди, живёт в заявках — его и обновляем.
+UPDATE requests SET source_name = 'Градус'
+WHERE source = 'vahtapro' AND source_name = 'ВахтаПро';
+""")
+
+
+# --- v5: ставки рекрутёра правилами ------------------------------------------
+#
+# Прежняя таблица держала одну ставку на контрагента. Реальность сложнее и
+# приходит картинкой раз в неделю: у Градуса лестница по сменам (15/20/30 смен
+# → 15/20/23 тыс.), у ЯППИ поверх лестницы исключения по объектам и даже по
+# разряду, у КНК просто «объект → ставка, действует до 31.07».
+#
+# Поэтому здесь не одна ставка, а правила с областью действия. Пустой объект
+# означает «весь контрагент», пустая должность — «все должности объекта»,
+# min_shifts = 0 — «без условия по сменам». Из этих трёх полей и складываются
+# три способа выставления: на всего контрагента, лестницей по сменам и
+# точечными исключениями.
+#
+# Контрагент здесь — источник (vahtapro, yappi, …), а не бренд заказчика: у
+# ВахтаПро в counterparty лежит клиент («BMJ», «Молком»), и ставка,
+# привязанная к нему, означала бы совсем другое.
+MIGRATIONS.append("""
+CREATE TABLE recruiter_rate_rules (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    source      TEXT NOT NULL,                   -- алиас контрагента-источника
+    client      TEXT NOT NULL DEFAULT '',        -- объект/заказчик, '' — все
+    vacancy     TEXT NOT NULL DEFAULT '',        -- должность, '' — все
+    min_shifts  INTEGER NOT NULL DEFAULT 0,      -- ступень «от N смен», 0 — без условия
+    amount      INTEGER NOT NULL,                -- рублей за кандидата
+    note        TEXT NOT NULL DEFAULT '',        -- надбавки и оговорки словами
+    payout      TEXT NOT NULL DEFAULT '',        -- когда платят: «адаптация 5 смен»
+    valid_from  TEXT NOT NULL DEFAULT '',
+    valid_to    TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT '',
+    author      TEXT NOT NULL DEFAULT '',
+    UNIQUE (source, client, vacancy, min_shifts)
+);
+
+CREATE INDEX idx_rate_rules_source ON recruiter_rate_rules(source);
+
+-- Ставки меняются каждую неделю, и вопрос «а сколько было в июле» возникает
+-- регулярно. Пишем каждое изменение, а не только текущее состояние.
+CREATE TABLE recruiter_rate_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    source      TEXT NOT NULL,
+    client      TEXT NOT NULL DEFAULT '',
+    vacancy     TEXT NOT NULL DEFAULT '',
+    min_shifts  INTEGER NOT NULL DEFAULT 0,
+    amount      INTEGER,
+    note        TEXT NOT NULL DEFAULT '',
+    payout      TEXT NOT NULL DEFAULT '',
+    valid_from  TEXT NOT NULL DEFAULT '',
+    valid_to    TEXT NOT NULL DEFAULT '',
+    action      TEXT NOT NULL DEFAULT 'set',     -- set | delete
+    changed_at  TEXT NOT NULL DEFAULT '',
+    author      TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX idx_rate_history_scope ON recruiter_rate_history(source, client, vacancy);
+
+-- Переносим то, что успели завести в прежней таблице. Источник берём по
+-- позициям того же контрагента: в старой схеме его просто не было.
+INSERT INTO recruiter_rate_rules
+    (source, client, vacancy, min_shifts, amount, note, payout, created_at, author)
+SELECT
+    COALESCE((SELECT p.source FROM positions p
+              WHERE p.counterparty = r.counterparty LIMIT 1), ''),
+    '', '', 0,
+    CASE WHEN r.kind = 'percent' AND r.base_amount IS NOT NULL
+         THEN CAST(ROUND(r.base_amount * COALESCE(r.value, 0) / 100.0) AS INTEGER)
+         ELSE CAST(COALESCE(r.value, 0) AS INTEGER) END,
+    TRIM(COALESCE(r.base, '') || ' ' || COALESCE(r.stage, '') || ' ' || COALESCE(r.guar, '')),
+    COALESCE(r.rule, ''),
+    COALESCE(r.updated_at, ''),
+    'перенос из старой таблицы'
+FROM recruiter_rates r;
+
+DROP TABLE recruiter_rates;
+""")
+
+
+# --- v6: КПК → КНК -----------------------------------------------------------
+#
+# Контрагент всё это время был заведён с опечаткой в названии. Ключ источника
+# (kpk) не трогаем по той же причине, что и у Градуса: он в колонке source у
+# всех заявок, в KPK_MATRIX_ID и в метках метрик. Меняем то, что видят люди.
+#
+# У КНК название контрагента лежит ещё и в самих позициях (в отличие от
+# Градуса, где в counterparty стоит заказчик), поэтому правим и его — иначе в
+# карточке заказчиком остался бы «КПК». После этой миграции нужен
+# `python scripts/renormalize.py`: fingerprint позиции считается в том числе
+# по контрагенту, и его следует пересчитать.
+MIGRATIONS.append("""
+UPDATE requests  SET source_name = 'КНК'
+WHERE source = 'kpk' AND source_name = 'КПК';
+
+UPDATE requests  SET counterparty = 'КНК', counterparty_raw = 'КНК'
+WHERE source = 'kpk' AND counterparty = 'КПК';
+
+UPDATE positions SET counterparty = 'КНК'
+WHERE source = 'kpk' AND counterparty = 'КПК';
+
+UPDATE positions SET counterparty_raw = 'КНК'
+WHERE source = 'kpk' AND counterparty_raw = 'КПК';
+
+-- Прежнее написание остаётся алиасом: если оно ещё где-то всплывёт,
+-- справочник приведёт его к новому названию, а не заведёт второго контрагента.
+UPDATE dictionaries SET canonical = 'КНК'
+WHERE kind = 'counterparty' AND canonical = 'КПК';
+
+INSERT OR IGNORE INTO dictionaries
+    (kind, alias, canonical, confirmed, hits, note, created_at, updated_at)
+VALUES ('counterparty', 'кнк', 'КНК', 1, 0, 'переименование КПК → КНК', '', '');
+""")
+
 
 @contextmanager
 def connect(db_path: str = None, readonly: bool = False) -> Iterator[sqlite3.Connection]:

@@ -1,0 +1,4 @@
+Фоновый луп экрана «Навигатор» кладётся сюда под именем navigator-bg.mp4.
+В макете это uploads/codenest_background_seamless_loop_master_2880x1248.mp4;
+путь зашит в templates/navigator.html (слой фона над заливкой #0A0F1E).
+Без файла backdrop-filter у .liquid-glass размывать нечего и стекло не читается.

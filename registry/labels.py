@@ -91,9 +91,9 @@ FIELD_GROUPS: List[Tuple[str, List[str]]] = [
 ]
 
 SOURCE_TITLES = {
-    "kpk": "КПК",
-    "yappi": "Yappi",
-    "vahtapro": "ВахтаПро",
+    "kpk": "КНК",
+    "yappi": "ЯППИ",
+    "vahtapro": "Градус",
     "aaaplus": "AAA+",
     "ametist": "Аметист",
     "marketstaff": "Маркетстафф",

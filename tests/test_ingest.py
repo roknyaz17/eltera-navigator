@@ -157,7 +157,7 @@ async def test_multi_chunk_request_stays_single(ingestor, parser, db_path):
     parser.mapping = dict(PARSED)
     whole = TEXT_A + "\n" + TEXT_B
     raw = RawRequest(source="vahtapro", source_ref="msg:10", raw_text=whole,
-                     source_name="ВахтаПро", parse_chunks=[TEXT_A, TEXT_B])
+                     source_name="Градус", parse_chunks=[TEXT_A, TEXT_B])
 
     stats = await ingestor.ingest("vahtapro", [raw])
     assert stats.requests_new == 1

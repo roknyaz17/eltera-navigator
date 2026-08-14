@@ -1,5 +1,5 @@
 """
-CLI-обёртка для прогона только ВахтаПро.
+CLI-обёртка для прогона только Градуса (в системе алиас источника — vahtapro).
 По сути алиас: `python main.py --sources vahtapro [--reset]`.
 
 Запуск:
@@ -35,7 +35,7 @@ async def _check_only(limit: int) -> None:
         me = await bot.whoami()
         logger.info(f"Userbot: {me['first_name']} {me.get('last_name') or ''} "
                     f"(@{me.get('username') or '—'}, id={me['id']})")
-        logger.info(f"Канал ВахтаПро: chat_id={chat_id}")
+        logger.info(f"Канал Градуса: chat_id={chat_id}")
         messages = await bot.get_messages(chat_id, limit=limit)
         logger.info(f"Получено сообщений: {len(messages)}")
         for m in messages[:10]:
@@ -50,7 +50,7 @@ def main() -> None:
     parser.add_argument("--check-only", action="store_true",
                         help="Только проверить доступ к каналу, не парсить")
     parser.add_argument("--reset", action="store_true",
-                        help="Сбросить is_active=FALSE для ВахтаПро перед прогоном")
+                        help="Сбросить is_active=FALSE для Градуса перед прогоном")
     args = parser.parse_args()
 
     if args.check_only:

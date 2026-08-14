@@ -21,6 +21,12 @@
 - «Потребность=0» (или прочее «пусто/нет/—») — позиция временно неактивна:
   пропускаем парсинг. Snapshot-lifecycle такие пометит is_active=FALSE.
 
+- Колонка «Ссылка на описание вакансии» ведёт на пост в Telegram-канале
+  Аметиста. В строке — структура (объект, потребность, ставка), в посте —
+  подробности, которых в строке физически нет: адрес, часы смен, оплата по
+  ролям, что выдают, условия заселения. Пост забирается ДО вызова LLM и
+  подаётся разбору вместе со строкой (см. telegram_post_fetcher).
+
 Подход к парсингу — как у MarketstaffSheetExtractor: одна строка → один
 LLM-вызов, полученные вакансии форсятся в source=«Аметист»,
 counterparty=«Аметист», а object_name (если LLM не определил) — берётся из
@@ -44,10 +50,15 @@ class AmetistSheetExtractor:
     DEFAULT_LLM_CONCURRENCY = 5
     SOURCE_NAME = "Аметист"
     COUNTERPARTY = "Аметист"
+    # Заголовок колонки со ссылкой на пост. Ищем по подстроке: контрагент уже
+    # переименовывал колонки, а «ссылка» в названии остаётся.
+    LINK_COLUMN_HINT = "ссылк"
 
-    def __init__(self, sheets_service, llm_parser):
+    def __init__(self, sheets_service, llm_parser, post_fetcher=None):
         self.sheets = sheets_service
         self.parser = llm_parser
+        # Без фетчера всё работает как раньше — по одной строке таблицы.
+        self.post_fetcher = post_fetcher
 
     async def collect_requests(
             self,
@@ -68,6 +79,8 @@ class AmetistSheetExtractor:
             logger.info("[Аметист] таблица пустая или не удалось прочитать")
             return []
 
+        posts = await self._fetch_posts(rows_with_region)
+
         seen: set = set()
         out: List[RawRequest] = []
         for region, row in rows_with_region:
@@ -81,7 +94,7 @@ class AmetistSheetExtractor:
             out.append(RawRequest(
                 source=SOURCE_AMETIST,
                 source_ref=unique_ref(f"{object_name}|{position}", seen),
-                raw_text=self._row_to_text(row, region),
+                raw_text=self._row_to_text(row, region, posts.get(self._row_link(row), "")),
                 source_name=self.SOURCE_NAME,
                 source_url=source_url,
                 counterparty_hint=self.COUNTERPARTY,
@@ -114,6 +127,8 @@ class AmetistSheetExtractor:
             logger.info("[Аметист] таблица пустая или не удалось прочитать")
             return empty_stats
 
+        posts = await self._fetch_posts(rows_with_region)
+
         # Готовим набор data-строк для LLM
         items: List[Tuple[str, str, str]] = []  # (label, text, object_name)
         for region, row in rows_with_region:
@@ -123,7 +138,7 @@ class AmetistSheetExtractor:
             object_name = (row.get("Объект") or "").strip()
             if not object_name:
                 continue
-            text = self._row_to_text(row, region)
+            text = self._row_to_text(row, region, posts.get(self._row_link(row), ""))
             label = f"{object_name} ({region or 'без региона'})"
             items.append((label, text, object_name))
 
@@ -235,12 +250,39 @@ class AmetistSheetExtractor:
             result.append((current_region, entry))
         return result
 
-    def _row_to_text(self, row: Dict[str, str], region: str) -> str:
+    def _row_link(self, row: Dict[str, str]) -> str:
+        """Ссылка на пост из строки: по названию колонки, иначе по значению."""
+        for key, value in row.items():
+            if key and self.LINK_COLUMN_HINT in key.lower() and (value or "").strip():
+                return value.strip()
+        for value in row.values():
+            if value and "t.me/" in value:
+                return value.strip()
+        return ""
+
+    async def _fetch_posts(self, rows_with_region: List[Tuple[str, Dict[str, str]]]) -> Dict[str, str]:
+        """Тексты постов по всем ссылкам листа за одно подключение к Telegram."""
+        if not self.post_fetcher:
+            return {}
+        links = {self._row_link(row) for _, row in rows_with_region}
+        links.discard("")
+        if not links:
+            return {}
+        posts = await self.post_fetcher.fetch_many(links)
+        found = sum(1 for link in links if posts.get(link))
+        logger.info(f"[Аметист] описаний из Telegram: {found} из {len(links)} ссылок")
+        return posts
+
+    def _row_to_text(self, row: Dict[str, str], region: str, post_text: str = "") -> str:
         """Собирает текст одной позиции для LLM.
 
         Источник и регион подаём явно, чтобы LLM не пытался угадывать.
         Прочие поля идут «как есть» с русскими названиями колонок — LLM
         понимает их без отдельного маппинга.
+
+        Описание из Telegram кладём отдельным блоком и прямо говорим, что
+        строка таблицы главнее: в посте бывает несколько ролей и старые ставки,
+        а потребность и актуальная ставка ведутся именно в таблице.
         """
         lines = [f"Источник: {self.SOURCE_NAME}"]
         if region:
@@ -249,4 +291,14 @@ class AmetistSheetExtractor:
             if not key or not value:
                 continue
             lines.append(f"{key}: {value}")
+        if post_text:
+            lines.append("")
+            lines.append(
+                "Ниже — описание вакансии из Telegram-канала контрагента. Оно ДОПОЛНЯЕТ "
+                "строку таблицы, а не заменяет её: всё, что указано в строке выше "
+                "(питание, медкнижка, проживание, гражданство, потребность, требования, "
+                "ставка), обязательно должно попасть в ответ. Из описания бери то, чего "
+                "в строке нет. При расхождении значений верна строка таблицы."
+            )
+            lines.append(post_text)
         return "\n".join(lines)

@@ -275,14 +275,21 @@ class RegistryIngestor:
             return
         sem = asyncio.Semaphore(self.llm_concurrency)
 
-        async def parse_chunk(text: str) -> Tuple[Optional[List[Dict[str, Any]]], int, int]:
+        async def parse_chunk(
+                text: str, context: Optional[str],
+        ) -> Tuple[Optional[List[Dict[str, Any]]], int, int]:
             async with sem:
-                return await self.parser.aparse_raw_ex(text)
+                return await self.parser.aparse_raw_ex(text, context)
 
         async def parse_one(item: _Pending) -> None:
             chunks = item.raw.parse_chunks or [item.raw.raw_text]
+            # Справка своя у каждого куска: в снимке дня один пост описывает
+            # десяток разных проектов.
+            contexts = item.raw.context_for_chunks()
             try:
-                results = await asyncio.gather(*[parse_chunk(chunk) for chunk in chunks])
+                results = await asyncio.gather(
+                    *[parse_chunk(chunk, ctx) for chunk, ctx in zip(chunks, contexts)]
+                )
             except Exception as exc:  # noqa: BLE001 — падение одной заявки не должно ронять прогон
                 logger.exception(f"[{item.request_id}] разбор упал: {exc}")
                 item.error = str(exc)

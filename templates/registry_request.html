@@ -55,6 +55,30 @@
     <div class="col-lg-5">
         <h6>Исходный текст заявки</h6>
         <div class="raw-text">{{ request_row.raw_text }}</div>
+
+        {% if kb_projects %}
+        <h6 class="mt-4">Справка по проекту</h6>
+        <div class="text-muted small mb-2">
+            Описание проекта с Яндекс.Диска контрагента. Разбор дополняет им поля,
+            о которых заявка молчит; потребность и ставка всегда берутся из заявки.
+        </div>
+        <ul class="list-unstyled small mb-0">
+            {% for kb in kb_projects %}
+            <li class="mb-2">
+                <a href="{{ kb.url }}" target="_blank" rel="noopener">{{ kb.project }} ↗</a>
+                <span class="text-muted">· совпадение {{ '%.2f'|format(kb.score) }}</span>
+                {% if kb.runner_up %}
+                <span class="text-muted">(следующий кандидат — {{ kb.runner_up }},
+                    {{ '%.2f'|format(kb.runner_up_score) }})</span>
+                {% endif %}
+                <div class="text-muted">
+                    {{ kb.docs|join(', ') if kb.docs else 'без описания' }}
+                    {% if kb.photos %}· фотографий: {{ kb.photos }}{% endif %}
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
     </div>
 
     <div class="col-lg-7">

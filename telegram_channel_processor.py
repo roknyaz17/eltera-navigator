@@ -2,7 +2,7 @@
 Универсальный процессор сообщений Telegram-каналов о вакансиях.
 
 Один класс, который через конфиг (source_name, snapshot_marker, signal_keywords и т.д.)
-обслуживает разные каналы (ВахтаПро, AAA+, и любые следующие). Логика разделения
+обслуживает разные каналы (Градус, AAA+, и любые следующие). Логика разделения
 сообщений и сегментации намеренно мягкая: «эта вакансия?» решается по содержимому,
 эмодзи-разделитель используется только для нарезки длинных постов на куски.
 
@@ -19,7 +19,7 @@
 
 import asyncio
 from datetime import datetime
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from loguru import logger
 
@@ -61,9 +61,10 @@ class TelegramChannelProcessor:
             profession_hints: Optional[Sequence[str]] = None,
             segment_emoji: Optional[str] = "🚀",
             counterparty_override: Optional[str] = None,
+            context_provider: Optional[Callable[[str], Tuple[Optional[str], Optional[Dict]]]] = None,
     ):
         """
-        :param source_name: значение для поля `source` в таблице (например, "ВахтаПро", "AAA+").
+        :param source_name: значение для поля `source` в таблице (например, "Градус", "AAA+").
         :param source_url_fallback: URL канала, если он не передан в process_messages.
         :param snapshot_marker: подстрока, идентифицирующая «снимок дня»
             (например, "Описание проектов и актуальная потребность"). Если None
@@ -75,6 +76,10 @@ class TelegramChannelProcessor:
         :param counterparty_override: если задано — принудительно ставить это значение
             в поле counterparty каждой распарсенной вакансии (то, что LLM туда вытащил,
             попадает в object_name, если object_name пуст).
+        :param context_provider: `текст → (справка по проекту, чем она подтверждена)`.
+            Через него канал получает описание проекта из базы знаний контрагента
+            (см. project_kb.py). Ничего не нашлось — (None, None), и заявка идёт
+            в разбор ровно как раньше.
         """
         self.sheets = sheets_service
         self.parser = llm_parser
@@ -85,6 +90,7 @@ class TelegramChannelProcessor:
         self.profession_hints = tuple(profession_hints or self.DEFAULT_PROFESSION_HINTS)
         self.segment_emoji = segment_emoji
         self.counterparty_override = counterparty_override
+        self.context_provider = context_provider
 
     # -------------------------------------------------------- сбор для реестра
     def collect_requests(
@@ -107,6 +113,7 @@ class TelegramChannelProcessor:
         url = source_url or self.source_url_fallback
         out: List[RawRequest] = []
         had_snapshot = False
+        with_context = 0
 
         for msg in sorted(messages, key=lambda m: m["date"]):
             text = (msg.get("text") or "").strip()
@@ -134,6 +141,17 @@ class TelegramChannelProcessor:
             if self.counterparty_override:
                 overrides["counterparty"] = self.counterparty_override
 
+            contexts, kb = self._collect_contexts(chunks)
+            if kb:
+                with_context += 1
+
+            payload = {"message_id": msg_id, "channel_id": msg.get("channel_id")}
+            if kb:
+                # Что именно подмешано к разбору, видно в карточке заявки: у
+                # менеджера должна быть возможность открыть ту же папку на
+                # диске и проверить, туда ли мы попали.
+                payload["kb"] = kb
+
             out.append(RawRequest(
                 source=source,
                 source_ref=f"msg:{msg_id}",
@@ -141,17 +159,39 @@ class TelegramChannelProcessor:
                 source_name=self.source_name,
                 source_url=self._message_url(msg, url),
                 counterparty_hint=self.counterparty_override or "",
-                raw_payload={"message_id": msg_id, "channel_id": msg.get("channel_id")},
+                raw_payload=payload,
                 received_at=received_at,
                 field_overrides=overrides,
                 parse_chunks=chunks if len(chunks) > 1 else None,
+                extra_context=contexts[0] if len(chunks) == 1 else None,
+                chunk_contexts=contexts if len(chunks) > 1 else None,
             ))
 
         logger.info(
             f"[{self.source_name}] заявок из канала: {len(out)}"
+            + (f", со справкой по проекту: {with_context}" if self.context_provider else "")
             + (", среди них снимок дня" if had_snapshot else "")
         )
         return out, had_snapshot
+
+    def _collect_contexts(
+            self, chunks: List[str],
+    ) -> Tuple[List[Optional[str]], List[Dict]]:
+        """Справка по каждому куску поста + сведения о найденных проектах."""
+        if not self.context_provider:
+            return [None] * len(chunks), []
+        contexts: List[Optional[str]] = []
+        found: List[Dict] = []
+        for chunk in chunks:
+            try:
+                context, meta = self.context_provider(chunk)
+            except Exception as exc:  # noqa: BLE001 — база знаний не должна ронять сбор
+                logger.warning(f"[{self.source_name}] справка по проекту не собрана: {exc}")
+                context, meta = None, None
+            contexts.append(context)
+            if meta:
+                found.append(meta)
+        return contexts, found
 
     def _message_url(self, msg: Dict, fallback: str) -> str:
         """Ссылка на конкретный пост, а не на канал целиком."""

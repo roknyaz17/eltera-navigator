@@ -42,9 +42,15 @@ class StubParser:
         self.mapping = mapping or {}
         self.calls = 0
         self.fail_on: set = set()
+        # Справки, с которыми звали разбор: по ним проверяется, что база
+        # знаний доезжает до модели и что каждому куску досталась своя.
+        self.contexts: List[Optional[str]] = []
 
-    async def aparse_raw_ex(self, text: str) -> Tuple[Optional[List[Dict]], int, int]:
+    async def aparse_raw_ex(
+            self, text: str, context: Optional[str] = None,
+    ) -> Tuple[Optional[List[Dict]], int, int]:
         self.calls += 1
+        self.contexts.append(context)
         if text in self.fail_on:
             return None, 10, 0
         return list(self.mapping.get(text, [])), 100, 50

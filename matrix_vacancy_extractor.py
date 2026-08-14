@@ -20,7 +20,7 @@ class MatrixToVacanciesService:
             self,
             matrix_spreadsheet_id: str,
             matrix_sheet_name: str = None,
-            counterparty_name: str = "КПК",
+            counterparty_name: str = "КНК",
             source_url: str = "",
     ) -> List[RawRequest]:
         """Отдаёт столбцы матрицы (один город = одна заявка) для реестра."""
@@ -29,7 +29,7 @@ class MatrixToVacanciesService:
             matrix_spreadsheet_id, matrix_sheet_name,
         )
         if not matrix_data:
-            logger.info("[КПК] матрица пустая или не удалось прочитать")
+            logger.info("[КНК] матрица пустая или не удалось прочитать")
             return []
 
         seen: set = set()
@@ -49,7 +49,7 @@ class MatrixToVacanciesService:
                 field_defaults={"counterparty": counterparty_name, "city": city},
             ))
 
-        logger.info(f"[КПК] из матрицы взято {len(out)} городов с потребностью")
+        logger.info(f"[КНК] из матрицы взято {len(out)} городов с потребностью")
         return out
 
     async def extract_and_save(
@@ -58,7 +58,7 @@ class MatrixToVacanciesService:
             target_spreadsheet_id: str,
             target_sheet_name: str = "Лист1",
             matrix_sheet_name: str = None,
-            counterparty_name: str = "КПК",
+            counterparty_name: str = "КНК",
             source_url: str = "",
             llm_concurrency: int = None,
             sheets_lock: Optional[asyncio.Lock] = None,
@@ -87,8 +87,8 @@ class MatrixToVacanciesService:
 
         async def parse_one(city: str, text: str):
             async with sem:
-                logger.info(f"[КПК] парсим: {city}")
-                parsed = await self.parser.aparse(text, source="КПК", source_url=source_url)
+                logger.info(f"[КНК] парсим: {city}")
+                parsed = await self.parser.aparse(text, source="КНК", source_url=source_url)
                 return city, text, parsed
 
         results = await asyncio.gather(*[parse_one(c, t) for c, t in items])
@@ -97,11 +97,11 @@ class MatrixToVacanciesService:
         all_vacancies: List[Dict] = []
         for city, text, parsed in results:
             if not parsed:
-                logger.warning(f"[КПК] парсер вернул пустой результат для {city}")
+                logger.warning(f"[КНК] парсер вернул пустой результат для {city}")
                 continue
             for vac in parsed:
                 vac.setdefault("counterparty", counterparty_name)
-                vac.setdefault("source", "КПК Матрица")
+                vac.setdefault("source", "КНК Матрица")
                 vac.setdefault("source_url", source_url)
                 vac.setdefault("original_message", text)
             all_vacancies.extend(parsed)

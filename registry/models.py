@@ -171,24 +171,43 @@ class RawRequest:
     # десятками объектов — это один документ от контрагента, а нарезка по
     # «🚀» нужна только модели. raw_text хранит пост целиком.
     parse_chunks: Optional[List[str]] = None
+    # Справка по проекту из базы знаний контрагента (папка на Яндекс.Диске).
+    # Заявкой не является и позиций не создаёт: только дополняет поля, о
+    # которых пост молчит, — адрес объекта, часы смены, условия проживания.
+    # См. project_kb.py.
+    extra_context: Optional[str] = None
+    # Справка отдельно для каждого куска: в снимке дня один пост описывает
+    # десяток разных проектов, и общего контекста у них нет.
+    chunk_contexts: Optional[List[Optional[str]]] = None
+
+    def context_for_chunks(self) -> List[Optional[str]]:
+        """Справки по числу кусков разбора — ровно то, что нужно ingest."""
+        chunks = self.parse_chunks or [self.raw_text]
+        if self.chunk_contexts and len(self.chunk_contexts) == len(chunks):
+            return list(self.chunk_contexts)
+        return [self.extra_context] * len(chunks)
 
     @property
     def content_hash(self) -> str:
         """Хэш содержимого — детектор изменений, не идентификатор.
 
         В хэш идут и текст, и подстановки: если в таблице поменялась только
-        колонка «Объект», текст мог не измениться, а позиция — да.
+        колонка «Объект», текст мог не измениться, а позиция — да. Справка с
+        диска — там же: контрагент дописал в описание проекта питание, текст
+        поста не поменялся, а разобрать заявку заново нужно.
         """
-        payload = json.dumps(
-            {
-                "text": self.raw_text,
-                "overrides": self.field_overrides,
-                "defaults": self.field_defaults,
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-            default=str,
-        )
+        data = {
+            "text": self.raw_text,
+            "overrides": self.field_overrides,
+            "defaults": self.field_defaults,
+        }
+        # Ключ добавляется, только когда справка есть: иначе появление самого
+        # поля перебило бы хэши всех заявок всех источников разом и погнало бы
+        # реестр на сплошной повторный разбор.
+        contexts = [c for c in self.context_for_chunks() if c]
+        if contexts:
+            data["context"] = contexts
+        payload = json.dumps(data, ensure_ascii=False, sort_keys=True, default=str)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

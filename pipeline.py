@@ -20,8 +20,11 @@ except ImportError:
 
 from aaaplus_message_processor import AaaPlusMessageProcessor
 from ametist_sheet_extractor import AmetistSheetExtractor
+from telegram_post_fetcher import TelegramPostFetcher
 from marketstaff_sheet_extractor import MarketstaffSheetExtractor
 from matrix_vacancy_extractor import MatrixToVacanciesService
+from project_kb import link_positions as link_project_folders
+from project_kb import refresh_if_stale as refresh_project_kb
 from registry.export_sheets import export_to_sheets
 from registry.ingest import RegistryIngestor
 from registry.models import RawRequest
@@ -58,6 +61,22 @@ MARKETSTAFF_SHEET_NAME = "Объекты МО"
 # одна позиция). См. ametist_sheet_extractor.py.
 AMETIST_SPREADSHEET_ID = "1mnupysp96GdAZ5UEHFafOdyiqyqMgZt3-z0WBFM2Akg"
 AMETIST_URL = f"https://docs.google.com/spreadsheets/d/{AMETIST_SPREADSHEET_ID}"
+# Тексты постов переживают прогон: Telegram отваливается, а терять из-за
+# этого уже извлечённые поля позиции нельзя.
+AMETIST_POSTS_CACHE = os.getenv("TELEGRAM_POSTS_CACHE", "data/telegram_posts.json")
+
+
+def _ametist_post_fetcher():
+    """Забиратель описаний из Telegram или None, если userbot не настроен.
+
+    Ссылка на пост есть в самой таблице Аметиста, но читать закрытый канал
+    может только userbot: боту туда не попасть. Нет TELEGRAM_SESSION — значит
+    разбираем строки как раньше, без описаний.
+    """
+    if not os.getenv("TELEGRAM_SESSION", "").strip():
+        logger.warning("[Аметист] TELEGRAM_SESSION пуст — описания из Telegram не подтягиваются")
+        return None
+    return TelegramPostFetcher(cache_path=AMETIST_POSTS_CACHE)
 
 # Верхний предел сообщений за обход (cap). Реальный фильтр — по дате (с 07:00 МСК).
 TG_LIMIT = 20
@@ -81,21 +100,31 @@ def _since_today_msk() -> datetime:
 
 
 SOURCE_NAMES: Dict[str, str] = {
-    "kpk": "КПК",
-    "yappi": "Yappi",
-    "vahtapro": "ВахтаПро",
+    "kpk": "КНК",
+    "yappi": "ЯППИ",
+    "vahtapro": "Градус",
     "aaaplus": "AAA+",
     "ametist": "Аметист",
     "marketstaff": "Маркетстафф",
 }
 ALL_SOURCES = list(SOURCE_NAMES.keys())
 
+# Контрагент переименовался в «Градус», а ключ источника остался прежним: он
+# лежит в колонке source у всех заявок и позиций, в именах переменных окружения
+# и в метках метрик. Переименование ключа переписало бы историю ради названия,
+# поэтому новое имя принимается как синоним при запуске.
+SOURCE_ALIASES: Dict[str, str] = {
+    "gradus": "vahtapro",
+    "градус": "vahtapro",
+}
+
 
 def parse_sources(raw: Optional[str]) -> List[str]:
     """'kpk,yappi' -> ['kpk', 'yappi']. None или пустая строка -> все источники."""
     if not raw:
         return list(ALL_SOURCES)
-    items = [s.strip().lower() for s in raw.split(",") if s.strip()]
+    items = [SOURCE_ALIASES.get(s.strip().lower(), s.strip().lower())
+             for s in raw.split(",") if s.strip()]
     invalid = [s for s in items if s not in ALL_SOURCES]
     if invalid:
         raise ValueError(
@@ -108,7 +137,7 @@ def parse_sources(raw: Optional[str]) -> List[str]:
 async def _read_telegram(sources: List[str]) -> Dict[str, Optional[List[dict]]]:
     """Читает сообщения каналов в одном async-сеансе userbot'а.
 
-    Аметист переехал на таблицу, поэтому здесь только ВахтаПро и AAA+.
+    Аметист переехал на таблицу, поэтому здесь только Градус и AAA+.
     """
     need_vahtapro = "vahtapro" in sources
     need_aaaplus = "aaaplus" in sources
@@ -128,7 +157,7 @@ async def _read_telegram(sources: List[str]) -> Dict[str, Optional[List[dict]]]:
         if need_vahtapro:
             chat_id = int(os.environ["TELEGRAM_VAHTAPRO_CHAT_ID"])
             out["vahtapro"] = await bot.get_messages(chat_id, limit=TG_LIMIT, after=since)
-            logger.info(f"ВахтаПро: получено {len(out['vahtapro'])} сообщений за период")
+            logger.info(f"Градус: получено {len(out['vahtapro'])} сообщений за период")
         if need_aaaplus:
             chat_id = int(os.environ["TELEGRAM_AAAPLUS_CHAT_ID"])
             out["aaaplus"] = await bot.get_messages(chat_id, limit=TG_LIMIT, after=since)
@@ -177,7 +206,7 @@ async def _collect_requests(
         tasks.append(matrix_ex.collect_requests(
             matrix_spreadsheet_id=KPK_MATRIX_ID,
             matrix_sheet_name="Таблица",
-            counterparty_name="КПК",
+            counterparty_name="КНК",
             source_url=KPK_MATRIX_URL,
         ))
         aliases.append("kpk")
@@ -202,7 +231,7 @@ async def _collect_requests(
         aliases.append("yappi")
 
     if "ametist" in sources:
-        ametist_ex = AmetistSheetExtractor(sheets, vacancy_parser)
+        ametist_ex = AmetistSheetExtractor(sheets, vacancy_parser, _ametist_post_fetcher())
         tasks.append(ametist_ex.collect_requests(
             ametist_spreadsheet_id=AMETIST_SPREADSHEET_ID,
             ametist_sheet_name="Потребность ",
@@ -248,7 +277,16 @@ async def run_registry_pipeline(sources: List[str], reset: bool = False) -> Dict
     vacancy_parser = VacancyParserService()
     sheets = GoogleSheetsService("credentials.json")
 
+    # Индекс Яндекс.Диска Градуса обновляем параллельно с чтением канала:
+    # это сеть, а не расчёты, и к моменту сбора заявок он должен быть готов.
+    # Диск недоступен — refresh_project_kb молча оставит прошлый индекс.
+    kb_task = (
+        asyncio.create_task(asyncio.to_thread(refresh_project_kb))
+        if "vahtapro" in sources else None
+    )
     tg_msgs = await _read_telegram(sources)
+    if kb_task is not None:
+        await kb_task
     batches = await _collect_requests(sources, sheets, vacancy_parser, tg_msgs, reset)
     if not batches:
         logger.warning("Ни один источник не отдал заявок")
@@ -258,6 +296,14 @@ async def run_registry_pipeline(sources: List[str], reset: bool = False) -> Dict
     start_time = _time.time()
     stats = await ingestor.ingest_batches(batches)
     total_duration = _time.time() - start_time
+
+    if "vahtapro" in sources:
+        # Позиции могли появиться или сменить объект — пересчитываем, у каких
+        # из них есть папка с фотографиями на диске (кнопка в /navigator).
+        try:
+            await asyncio.to_thread(link_project_folders)
+        except Exception:  # noqa: BLE001 — прогон из-за ссылок на фото не падает
+            logger.exception("Не удалось связать позиции с папками проектов")
 
     out: Dict[str, Dict[str, int]] = {}
     for alias, item in stats.items():
@@ -274,7 +320,10 @@ async def run_registry_pipeline(sources: List[str], reset: bool = False) -> Dict
             M.REG_REQUESTS.labels(source=alias, kind="failed").inc(item.requests_failed)
             M.REG_LLM_CALLS_SAVED.labels(source=alias).inc(item.llm_calls_saved)
 
-    logger.info(f"=== LLM usage: {vacancy_parser.usage.summary()} ===")
+    logger.info(
+        f"=== LLM usage: {vacancy_parser.usage.summary()}"
+        f", разборов со справкой по проекту: {vacancy_parser.context_hits} ==="
+    )
     if _METRICS_OK:
         u = vacancy_parser.usage
         label = ",".join(stats.keys())
@@ -346,7 +395,7 @@ async def run_pipeline(sources: List[str], reset: bool = False) -> Dict[str, Dic
             matrix_spreadsheet_id=KPK_MATRIX_ID,
             target_spreadsheet_id=TARGET_SPREADSHEET_ID,
             target_sheet_name=TARGET_SHEET_NAME,
-            counterparty_name="КПК",
+            counterparty_name="КНК",
             matrix_sheet_name="Таблица",
             source_url=KPK_MATRIX_URL,
             sheets_lock=sheets_lock,
@@ -405,7 +454,7 @@ async def run_pipeline(sources: List[str], reset: bool = False) -> Dict[str, Dic
         aliases.append("aaaplus")
 
     if "ametist" in sources:
-        ametist_ex = AmetistSheetExtractor(sheets, vacancy_parser)
+        ametist_ex = AmetistSheetExtractor(sheets, vacancy_parser, _ametist_post_fetcher())
         tasks.append(ametist_ex.extract_and_save(
             ametist_spreadsheet_id=AMETIST_SPREADSHEET_ID,
             target_spreadsheet_id=TARGET_SPREADSHEET_ID,

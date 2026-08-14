@@ -24,6 +24,7 @@ FastAPI-приложение со встроенным APScheduler и веб-с�
 
 import csv
 import io
+import json
 import math
 import os
 import secrets
@@ -54,6 +55,7 @@ from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 
 import metrics as M
+import navigator_api
 from pipeline import (
     ALL_SOURCES,
     REGISTRY_ENABLED,
@@ -63,7 +65,13 @@ from pipeline import (
     parse_sources,
     run_pipeline,
 )
-from registry import compat, db as registry_db, dictionaries as registry_dicts, queries as rq
+from registry import (
+    compat,
+    db as registry_db,
+    dictionaries as registry_dicts,
+    queries as rq,
+    rates,
+)
 from registry.ingest import RegistryIngestor
 from registry.labels import FIELD_GROUPS, FIELD_LABELS, SOURCE_TITLES, display
 from registry.models import DATA_FIELDS, RawRequest
@@ -78,19 +86,19 @@ JOBS = {
         "trigger": CronTrigger(hour=9, minute=30, timezone="Europe/Moscow"),
         "sources": ["vahtapro", "aaaplus"],
         "reset": True,
-        "description": "09:30 МСК — ВахтаПро + AAA+ с reset",
+        "description": "09:30 МСК — Градус + AAA+ с reset",
     },
     "noon_tables": {
         "trigger": CronTrigger(hour=12, minute=0, timezone="Europe/Moscow"),
         "sources": ["kpk", "yappi", "marketstaff"],
         "reset": True,
-        "description": "12:00 МСК — КПК + Yappi + Маркетстафф с reset",
+        "description": "12:00 МСК — КНК + ЯППИ + Маркетстафф с reset",
     },
     "afternoon_vahtapro": {
         "trigger": CronTrigger(hour=13, minute=0, timezone="Europe/Moscow"),
         "sources": ["vahtapro"],
         "reset": False,
-        "description": "13:00 МСК — ВахтаПро без reset",
+        "description": "13:00 МСК — Градус без reset",
     },
     "afternoon_ametist": {
         "trigger": CronTrigger(hour=13, minute=30, timezone="Europe/Moscow"),
@@ -357,14 +365,160 @@ async def root_redirect(user: str = Depends(verify_creds)):
 
 @app.get("/navigator", response_class=HTMLResponse)
 async def navigator(user: str = Depends(verify_creds)):
-    """Кандидат-фронт «Навигатор вакансий» (тёмная тема Eltera).
+    """Навигатор: подбор позиций и админ-очередь (тёмная тема Eltera).
 
-    Это статичный HTML+JS: данные он подтягивает с /api/vacancies и фильтрует
+    Это статичный HTML+JS: данные он подтягивает с /api/navigator и фильтрует
     на клиенте. Отдаём содержимое файла напрямую (без Jinja-рендеринга), чтобы
     фигурные скобки в JS/CSS гарантированно не интерпретировались как шаблон.
     """
     with open("templates/navigator.html", encoding="utf-8") as f:
         return HTMLResponse(f.read())
+
+
+@app.get("/api/navigator")
+async def api_navigator(
+        active_only: bool = True,
+        user: str = Depends(verify_creds),
+) -> JSONResponse:
+    """Данные для экрана «Навигатор» в модели интерфейса.
+
+    Отдельно от /api/vacancies: тот отдаёт плоские строки старого формата, а
+    здесь позиция собрана блоками (проживание, питание, проезд, удержания) и
+    рядом лежат исходники заявок, города с координатами, источники и слой
+    мотивации рекрутера. Перевод из реестра — в navigator_api.
+    """
+    import asyncio
+
+    def _build() -> dict:
+        with registry_db.connect() as conn:
+            return navigator_api.build_payload(conn, active_only=active_only)
+
+    payload = await asyncio.to_thread(_build)
+    return JSONResponse(payload)
+
+
+@app.post("/api/rates")
+async def api_rates_save(payload: dict, user: str = Depends(verify_creds)) -> JSONResponse:
+    """Выставление ставок рекрутёра из админки «Навигатора».
+
+    Три стратегии — это три области действия одного и того же правила:
+
+        all      одна ставка на всего контрагента
+        shifts   лестница «от N смен» на всего контрагента
+        clients  выбранные объекты (и, если задана, конкретная должность)
+
+    `dryRun` считает, скольких позиций это коснётся, и ничего не пишет: форма
+    показывает это до сохранения, чтобы руководитель не выставлял ставку
+    вслепую.
+    """
+    import asyncio
+
+    source = str(payload.get("source") or "").strip()
+    if source not in ALL_SOURCES:
+        raise HTTPException(400, f"Неизвестный контрагент: {source or '—'}")
+    strategy = str(payload.get("strategy") or "all").strip()
+    if strategy not in ("all", "shifts", "clients"):
+        raise HTTPException(400, f"Неизвестная стратегия: {strategy}")
+
+    def _work() -> dict:
+        with registry_db.connect() as conn:
+            rules = _rate_rules_from_payload(source, strategy, payload)
+            if not rules:
+                raise HTTPException(400, "Нечего сохранять: не заданы суммы")
+            affected = _positions_affected(conn, rules)
+            if payload.get("dryRun"):
+                return {"ok": True, "dryRun": True, "rules": len(rules), "positions": affected}
+            # Область переписывается целиком: в новой сетке контрагента может
+            # не быть прежних ступеней, и они иначе остались бы висеть рядом.
+            for scope in {(rule.source, rule.client, rule.vacancy) for rule in rules}:
+                rates.clear_scope(conn, scope[0], scope[1], scope[2], author=user)
+            saved = rates.save_rules(conn, rules, author=user)
+            return {"ok": True, "rules": saved, "positions": affected}
+
+    return JSONResponse(await asyncio.to_thread(_work))
+
+
+@app.delete("/api/rates/{rule_id}")
+async def api_rates_delete(rule_id: int, user: str = Depends(verify_creds)) -> JSONResponse:
+    import asyncio
+
+    def _work() -> dict:
+        with registry_db.connect() as conn:
+            return {"ok": rates.delete_rule(conn, rule_id, author=user)}
+
+    result = await asyncio.to_thread(_work)
+    if not result["ok"]:
+        raise HTTPException(404, f"Правило {rule_id} не найдено")
+    return JSONResponse(result)
+
+
+def _rate_rules_from_payload(source: str, strategy: str, payload: dict) -> List[rates.RateRule]:
+    """Форма админки → список правил. Ничего не додумывает: нет суммы — нет правила."""
+    common = {
+        "note": str(payload.get("note") or "").strip(),
+        "payout": str(payload.get("payout") or "").strip(),
+        "valid_from": str(payload.get("validFrom") or "").strip(),
+        "valid_to": str(payload.get("validTo") or "").strip(),
+    }
+    vacancy = str(payload.get("vacancy") or "").strip()
+    tiers = [
+        (int(item.get("minShifts") or 0), int(item.get("amount") or 0))
+        for item in (payload.get("tiers") or [])
+        if str(item.get("amount") or "").strip()
+    ]
+    amount = int(payload.get("amount") or 0)
+
+    if strategy == "all":
+        if amount <= 0:
+            return []
+        return [rates.RateRule(source=source, amount=amount, **common)]
+
+    if strategy == "shifts":
+        return [
+            rates.RateRule(source=source, min_shifts=shifts, amount=value, **common)
+            for shifts, value in tiers if value > 0 and shifts > 0
+        ]
+
+    clients = [str(name).strip() for name in (payload.get("clients") or []) if str(name).strip()]
+    if not clients:
+        raise HTTPException(400, "Не выбран ни один объект")
+    out: List[rates.RateRule] = []
+    for client in clients:
+        if tiers:
+            out += [
+                rates.RateRule(source=source, client=client, vacancy=vacancy,
+                               min_shifts=shifts, amount=value, **common)
+                for shifts, value in tiers if value > 0 and shifts > 0
+            ]
+        elif amount > 0:
+            out.append(rates.RateRule(source=source, client=client, vacancy=vacancy,
+                                      amount=amount, **common))
+    return out
+
+
+def _positions_affected(conn, rules: List[rates.RateRule]) -> int:
+    """Сколько активных позиций попадёт под эти правила.
+
+    Считаем тем же подбором, что и на витрине: правило по объекту может
+    перебить правило по контрагенту, и «затронуто 56» вместо реальных 4 —
+    это ровно та цифра, ради которой предпросмотр и делается.
+    """
+    scopes = {(rule.client, rule.vacancy) for rule in rules}
+    rows = conn.execute(
+        "SELECT counterparty, object_name, vacancy_name FROM positions "
+        "WHERE source = ? AND is_active = 1", (rules[0].source,),
+    ).fetchall()
+    count = 0
+    for row in rows:
+        client = rates.client_key(row["counterparty"] or "", row["object_name"] or "")
+        vacancy = (row["vacancy_name"] or "").strip()
+        if any(
+            (not scope_client or scope_client == client)
+            and (not scope_vacancy or scope_vacancy == vacancy)
+            for scope_client, scope_vacancy in scopes
+        ):
+            count += 1
+    return count
 
 
 @app.get("/api/vacancies")
@@ -772,8 +926,22 @@ async def registry_request(
             "positions": positions,
             "revisions": revisions,
             "source_titles": SOURCE_TITLES,
+            # Какие справки с Яндекс.Диска подмешивались к разбору. Менеджер
+            # должен видеть не только «что распозналось», но и по какому
+            # описанию проекта, и мочь открыть ту же папку.
+            "kb_projects": _kb_projects(request_row),
         },
     )
+
+
+def _kb_projects(request_row) -> list:
+    """Проекты базы знаний, привязанные к заявке (см. project_kb.py)."""
+    try:
+        payload = json.loads(request_row["raw_payload"] or "{}")
+    except (ValueError, TypeError):
+        return []
+    items = payload.get("kb") or []
+    return items if isinstance(items, list) else []
 
 
 # ---------- /vacancies ----------
