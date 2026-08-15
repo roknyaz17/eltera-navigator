@@ -51,8 +51,12 @@ def export_to_sheets(
             cols=max(len(LEGACY_COLUMNS), worksheet.col_count),
         )
 
+    # RAW, а не USER_ENTERED: витрина отдаёт текст заявок как есть.
+    # При USER_ENTERED строка, начинающаяся с «=», «+» или «-», трактуется
+    # таблицей как формула, а «5/2» — как дата. График «5/2» превращался
+    # в «05.02», а требование «=2 года опыта» — в #ERROR!.
     worksheet.update(
-        f"A1:{end_column}{needed_rows}", values, value_input_option="USER_ENTERED"
+        f"A1:{end_column}{needed_rows}", values, value_input_option="RAW"
     )
 
     if previous_rows > needed_rows:
