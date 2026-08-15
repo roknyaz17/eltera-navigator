@@ -96,8 +96,6 @@ const PROPS = {
 
 /* ---- Пароль админ-вкладки. Страница уже за Basic Auth; это второй,
        клиентский рубеж из макета — от случайного захода, не от взлома. ---- */
-const ADMIN_PASS = '1207';
-const AUTH_KEY = 'eltera_navigator_admin_v1';
 const MAX_TRIES = 3;
 const SEND_TIME = '09:00';
 /* Предел одного сообщения Telegram: длинный запрос туда просто не влезет. */
@@ -122,9 +120,14 @@ const S = {
   fRec: '', fHouse: '', fMeals: '', fCit: '', fGender: '', fMed: '', fSb: '', fSched: '',
   scope: 'all',
   adminTab: 'exc',
+  // Доступы грузятся отдельной ручкой и только для администратора: список
+  // сотрудников и журнал входов рекрутеру не должны приходить вовсе.
+  users: null,
+  usersErr: '',
+  issued: null,
+  userForm: { email: '', name: '', role: 'recruiter' },
   cpEdit: null, cpMenu: null, cpDelete: null,
   delPass: '', delErr: false,
-  authOpen: false, authPass: '', authErr: false, authOk: false,
   moreOpen: false,
   sort: 'rate',
   modal: null, detail: null, gaps: null,
@@ -619,19 +622,16 @@ function field(k, v, st) {
 
 /* ============================ доступ в админку ============================ */
 
+/* Кто мы и что нам можно — приходит с сервера в DATA.me. Раньше здесь был
+   пароль администратора прямо в этом файле и флаг в localStorage: любой
+   вошедший открывал админку через консоль браузера. Теперь роль проверяется
+   на сервере на каждом роуте, а тут только показываем или прячем. */
 function authed() {
-  if (S.authOk) return true;
-  try { return localStorage.getItem(AUTH_KEY) === 'ok'; } catch (e) { return false; }
+  return !!(DATA.me && DATA.me.isAdmin);
 }
 function openAdmin() {
   if (authed()) { setState({ screen: 'norm' }); return; }
-  setState({ authOpen: true, authPass: '', authErr: false });
-}
-function submitAuth() {
-  if (S.authPass.trim() !== ADMIN_PASS) { setState({ authErr: true }); return; }
-  try { localStorage.setItem(AUTH_KEY, 'ok'); } catch (e) {}
-  setState({ authOk: true, authOpen: false, authPass: '', authErr: false, screen: 'norm' });
-  toast('Вход выполнен — устройство запомнено');
+  toast('Раздел доступен только администратору');
 }
 
 function cpByName(name) {
@@ -1272,7 +1272,8 @@ function viewAdmin() {
     { key: 'exc', label: 'Исключения', count: exceptions.length },
     { key: 'req', label: 'Запросы', count: outreach.length },
     { key: 'rate', label: 'Ставки', count: (DATA.rates.rules || []).length },
-    { key: 'src', label: 'Контрагенты', count: DATA.cps.filter((x) => !x.archived).length }
+    { key: 'src', label: 'Контрагенты', count: DATA.cps.filter((x) => !x.archived).length },
+    { key: 'users', label: 'Доступы', count: S.users ? S.users.people.filter((p) => p.active).length : 0 }
   ];
 
   html += '<section class="navMain" style="flex:99 1 420px; min-width:0; display:flex; flex-direction:column; gap:12px; position:sticky; top:14px; height:calc(100vh - 124px); min-height:480px; overflow:hidden;">'
@@ -1287,8 +1288,145 @@ function viewAdmin() {
   if (S.adminTab === 'req') html += viewOutreach(outreach);
   if (S.adminTab === 'rate') html += viewRates();
   if (S.adminTab === 'src') html += viewSources(links);
+  if (S.adminTab === 'users') html += viewUsers();
 
   return html + '</div></div></section></div>';
+}
+
+/* ============================== вкладка «Доступы» ==========================
+   Учётные записи сотрудников. Данные приходят с /api/users — отдельной
+   ручкой, закрытой ролью администратора: рекрутеру список людей и журнал
+   входов не отдаются вовсе, а не просто прячутся на экране. */
+
+function viewUsers() {
+  if (S.usersErr) {
+    return '<div style="padding:36px 12px; text-align:center;">'
+      + '<div style="font-size:14px; font-weight:600; color:#D9A441;">Доступы не загрузились</div>'
+      + '<p style="margin:6px auto 0; max-width:420px; font-size:12.5px; line-height:1.6; color:rgba(255,255,255,.5);">' + esc(S.usersErr) + '</p></div>';
+  }
+  if (!S.users) {
+    loadUsers();
+    return '<div style="padding:36px 12px; text-align:center; font-size:12.5px; color:rgba(255,255,255,.5);">Загружаю…</div>';
+  }
+
+  const d = S.users;
+  const f = S.userForm;
+  const label = (t) => '<span style="display:block; font-size:11.5px; color:rgba(255,255,255,.5); margin-bottom:5px;">' + esc(t) + '</span>';
+  let html = '';
+
+  /* Временный пароль показывается ровно один раз — здесь. Второй раз его
+     взять неоткуда: в базе он хешем, в журнал не попадает. */
+  if (S.issued) {
+    html += '<div style="padding:14px; border-radius:14px; background:rgba(217,164,65,.1); border:1px solid rgba(217,164,65,.3);">'
+      + '<div style="font-size:13px; font-weight:600; color:#D9A441;">Временный пароль для ' + esc(S.issued.email) + '</div>'
+      + '<div style="display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap;">'
+      + '<code id="issuedPass" style="flex:1 1 200px; padding:12px 14px; border-radius:12px; background:rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.1); font-family:ui-monospace,monospace; font-size:17px; letter-spacing:.04em; color:#E6F2FF; user-select:all; word-break:break-all;">' + esc(S.issued.password) + '</code>'
+      + '<button type="button" data-act="copyIssued" style="' + BTN_OFF + '">Скопировать</button>'
+      + '<button type="button" data-act="hideIssued" class="hLight" style="' + CHIP_OFF + '">Скрыть</button>'
+      + '</div>'
+      + '<p style="margin:10px 0 0; font-size:11.5px; line-height:1.6; color:rgba(255,255,255,.55);">Показан один раз — страница его больше не покажет. Передайте лично. При первом входе сотрудник обязан задать свой пароль; до этого остальные разделы ему закрыты. Не успеет войти до ' + esc(fmtWhen(S.issued.expires)) + ' — пароль протухнет сам.</p>'
+      + '</div>';
+  }
+
+  /* Добавление сотрудника */
+  html += '<div class="liquid-glass" style="border-radius:16px; padding:14px;">'
+    + '<div style="font-size:13px; font-weight:600; color:#E6F2FF;">Добавить сотрудника</div>'
+    + '<p style="margin:4px 0 12px; font-size:11.5px; line-height:1.55; color:rgba(255,255,255,.45);">Навигатор заведёт учётную запись и выдаст временный пароль на ' + esc(String(d.ttlHours)) + ' часов.</p>'
+    + '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">'
+    + '<div style="flex:1 1 220px; min-width:0;">' + label('Рабочая почта')
+    + '<input type="email" class="fLine" data-fid="user:email" data-on="user:email" value="' + attr(f.email) + '" placeholder="name@eltera.ru" style="' + INPUT_S + '"></div>'
+    + '<div style="flex:1 1 180px; min-width:0;">' + label('Имя')
+    + '<input type="text" class="fLine" data-fid="user:name" data-on="user:name" value="' + attr(f.name) + '" placeholder="Иван Петров" style="' + INPUT_S + '"></div>'
+    + '</div>'
+    /* Роль и кнопка — отдельной строкой: на узком экране они конкурировали
+       за место с полями и наезжали друг на друга. */
+    + '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-top:10px;">'
+    + '<div style="flex:1 1 220px; min-width:0;">' + label('Роль')
+    + '<div style="display:flex; flex-wrap:wrap; gap:6px;">'
+    + d.roles.map((r) => '<button type="button" data-act="userRole" data-arg="' + attr(r.key) + '"' + (f.role === r.key ? '' : ' class="hLight"') + ' style="' + (f.role === r.key ? CHIP_ON : CHIP_OFF) + '">' + esc(r.title) + '</button>').join('')
+    + '</div></div>'
+    + '<button type="button" data-act="userCreate" style="' + BTN_ON + ' flex:0 0 auto;">Завести</button>'
+    + '</div></div>';
+
+  /* Список сотрудников */
+  html += d.people.map((p) => {
+    const role = (d.roles.filter((r) => r.key === p.role)[0] || {}).title || p.role;
+    const dim = p.active ? '' : 'opacity:.5;';
+    let state = p.active
+      ? '<span style="display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:#6EE7C1;"><span style="width:6px; height:6px; border-radius:9999px; background:#6EE7C1;"></span>действует</span>'
+      : '<span style="display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:rgba(255,255,255,.45);"><span style="width:6px; height:6px; border-radius:9999px; background:#64748B;"></span>отключён ' + esc(fmtWhen(p.disabledAt)) + '</span>';
+    if (p.active && p.temp) {
+      state += '<span style="margin-left:8px; font-size:11.5px; color:#D9A441;">временный пароль до ' + esc(fmtWhen(p.expires)) + '</span>';
+    }
+    return '<div style="' + dim + ' padding:14px; border-radius:14px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1);">'
+      + '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:baseline;">'
+      + '<div style="flex:1 1 200px; min-width:0;">'
+      + '<div style="font-size:13.5px; font-weight:600; color:#E6F2FF;">' + esc(p.name || p.email) + (p.id === d.me ? '<span style="margin-left:8px; font-size:11px; font-weight:400; color:rgba(255,255,255,.4);">это вы</span>' : '') + '</div>'
+      + '<div style="font-size:11.5px; color:rgba(255,255,255,.45);">' + esc(p.email) + '</div></div>'
+      + '<div style="flex:0 0 auto;">' + state + '</div></div>'
+      + '<div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:10px;">'
+      + d.roles.map((r) => '<button type="button" data-act="userSetRole" data-arg="' + attr(p.id + '|' + r.key) + '"' + (p.role === r.key ? '' : ' class="hLight"') + ' style="' + (p.role === r.key ? CHIP_ON : CHIP_OFF) + '">' + esc(r.title) + '</button>').join('')
+      + '<span style="flex:1 1 auto;"></span>'
+      + (p.active ? '<button type="button" data-act="userReset" data-arg="' + attr(p.id) + '" class="hLight" style="' + CHIP_OFF + '">Сбросить пароль</button>' : '')
+      + (p.id === d.me ? '' : '<button type="button" data-act="userToggle" data-arg="' + attr(p.id) + '" class="hLight" style="' + CHIP_OFF + '">' + (p.active ? 'Отключить' : 'Вернуть') + '</button>')
+      + '</div>'
+      + '<div style="margin-top:8px; font-size:11px; color:rgba(255,255,255,.35);">'
+      + (p.lastLogin ? 'последний вход ' + esc(fmtWhen(p.lastLogin)) : 'ещё не входил')
+      + ' · заведён ' + esc(fmtWhen(p.createdAt)) + (p.createdBy ? ', ' + esc(p.createdBy) : '')
+      + '</div></div>';
+  }).join('');
+
+  /* Журнал входов */
+  html += '<div class="liquid-glass" style="border-radius:16px; padding:14px; margin-top:4px;">'
+    + '<div style="font-size:13px; font-weight:600; color:#E6F2FF;">Журнал входов</div>';
+  if (!d.journal.length) {
+    html += '<p style="margin:8px 0 0; font-size:12px; color:rgba(255,255,255,.45);">Входов ещё не было.</p>';
+  } else {
+    html += '<div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">'
+      + d.journal.map((j) => '<div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:11.5px; color:rgba(255,255,255,.6);">'
+        + '<span style="width:6px; height:6px; flex:none; border-radius:9999px; background:' + (j.ok ? '#6EE7C1' : '#FF7B6B') + ';"></span>'
+        + '<span style="font-variant-numeric:tabular-nums; color:rgba(255,255,255,.45);">' + esc(fmtWhen(j.at)) + '</span>'
+        + '<span style="color:#E6F2FF;">' + esc(j.email || '—') + '</span>'
+        + '<span style="color:rgba(255,255,255,.35);">' + esc(j.ip) + '</span>'
+        + (j.ok ? '' : '<span style="color:#FF7B6B;">' + esc(j.reason) + '</span>')
+        + '</div>').join('')
+      + '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+/* ISO-дата → «16.08.2026 09:12». Сервер отдаёт как есть, чтобы не гадать
+   про часовой пояс клиента: у всех пользователей он один. */
+function fmtWhen(iso) {
+  if (!iso) return '—';
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if (!m) return String(iso);
+  return m[3] + '.' + m[2] + '.' + m[1] + ' ' + m[4] + ':' + m[5];
+}
+
+function loadUsers() {
+  if (S._usersLoading) return;
+  S._usersLoading = true;
+  fetch('/api/users', { credentials: 'same-origin' })
+    .then((res) => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+    .then((data) => { S._usersLoading = false; setState({ users: data, usersErr: '' }); })
+    .catch((err) => { S._usersLoading = false; setState({ usersErr: 'Не удалось получить список: ' + (err && err.message ? err.message : err) }); });
+}
+
+function userAction(url, body, okText) {
+  fetch(url, {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {})
+  })
+    .then((res) => res.json().then((data) => ({ ok: res.ok, data: data })))
+    .then((out) => {
+      if (!out.ok) { toast(out.data && out.data.detail ? out.data.detail : 'Не получилось'); return; }
+      if (okText) toast(okText);
+      setState({ users: out.data, issued: out.data.issued || null });
+    })
+    .catch((err) => toast('Не получилось: ' + (err && err.message ? err.message : err)));
 }
 
 function viewExceptions(exceptions) {
@@ -1653,16 +1791,6 @@ function viewModals() {
   const mRow = S.modal ? rowById(S.modal) : null;
   if (mRow) html += viewCandidate(mRow);
 
-  if (S.authOpen) {
-    html += overlay('Вход в админ-панель', '380px',
-      '<h3 style="margin:0 0 4px; font-size:16px; font-weight:700; color:#fff;">Введите пароль администратора</h3>'
-      + '<p style="margin:0 0 16px; font-size:12.5px; line-height:1.55; color:rgba(255,255,255,.5);">Спросим один раз на этом устройстве.</p>'
-      + '<input type="password" class="fLine" data-fid="authPass" data-on="authPass" data-enter="authSubmit" placeholder="Пароль" value="' + attr(S.authPass) + '" style="width:100%; height:38px; padding:0 14px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:13px; outline:none;">'
-      + (S.authErr ? '<div style="display:flex; align-items:center; gap:6px; margin-top:9px;"><span style="width:6px; height:6px; border-radius:9999px; background:#FF7B6B;"></span><span style="font-size:12px; color:#FF7B6B;">Неверный пароль</span></div>' : '')
-      + '<div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px;">'
-      + '<button type="button" data-act="authCancel" style="' + DLG_CANCEL + '">Отмена</button>'
-      + '<button type="button" data-act="authSubmit" style="height:34px; padding:0 18px; border:none; border-radius:9999px; background:#fff; color:#000; font-size:12px; font-weight:600; cursor:pointer;">Войти</button></div>', 'authCancel', false);
-  }
 
   if (S.cpDelete) {
     const linked = DATA.rows.some((r) => r.cp === S.cpDelete.name);
@@ -1671,9 +1799,9 @@ function viewModals() {
       + '<p style="margin:0 0 16px; font-size:12.5px; line-height:1.55; color:rgba(255,255,255,.6);">' + (linked
         ? 'С контрагентом связаны заявки и история переписки. Данные не удаляются — контрагент уйдёт в архив, связи внутри системы сохранятся.'
         : 'Связанных заявок и переписки нет — контрагент будет удалён полностью.') + '</p>'
-      + '<div style="font-size:11.5px; color:rgba(255,255,255,.5); margin-bottom:6px;">Введите пароль администратора</div>'
-      + '<input type="password" class="fLine" data-fid="delPass" data-on="delPass" data-enter="delConfirm" placeholder="Пароль" value="' + attr(S.delPass) + '" style="width:100%; height:34px; padding:0 14px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:13px; outline:none;">'
-      + (S.delErr ? '<div style="display:flex; align-items:center; gap:6px; margin-top:9px;"><span style="width:6px; height:6px; border-radius:9999px; background:#FF7B6B;"></span><span style="font-size:12px; color:#FF7B6B;">Неверный пароль</span></div>' : '')
+      + '<div style="font-size:11.5px; color:rgba(255,255,255,.5); margin-bottom:6px;">Для подтверждения введите название контрагента</div>'
+      + '<input type="text" class="fLine" data-fid="delPass" data-on="delPass" data-enter="delConfirm" placeholder="' + attr(S.cpDelete.name) + '" value="' + attr(S.delPass) + '" style="width:100%; height:34px; padding:0 14px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:13px; outline:none;">'
+      + (S.delErr ? '<div style="display:flex; align-items:center; gap:6px; margin-top:9px;"><span style="width:6px; height:6px; border-radius:9999px; background:#FF7B6B;"></span><span style="font-size:12px; color:#FF7B6B;">Название не совпало</span></div>' : '')
       + '<div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px;">'
       + '<button type="button" data-act="delCancel" style="' + DLG_CANCEL + '">Отмена</button>'
       + '<button type="button" data-act="delConfirm" style="height:34px; padding:0 16px; border:1px solid rgba(248,113,113,.35); border-radius:9999px; background:rgba(255,123,107,.14); color:#FF7B6B; font-size:12px; font-weight:600; cursor:pointer;">Подтвердить</button></div>', 'delCancel', false);
@@ -2002,10 +2130,40 @@ const ACTIONS = {
     setState({ picks: next, copied: false });
   },
 
-  authSubmit: () => submitAuth(),
-  authCancel: () => setState({ authOpen: false, authPass: '', authErr: false }),
 
   setAdminTab: (key) => setState({ adminTab: key }),
+
+  userRole: (key) => { S.userForm.role = key; render(); },
+  hideIssued: () => setState({ issued: null }),
+  copyIssued: () => {
+    const node = document.getElementById('issuedPass');
+    if (!node) return;
+    const text = node.textContent || '';
+    // Приложение отдаётся по http, где navigator.clipboard недоступен,
+    // поэтому падаем на выделение текста — скопировать можно вручную.
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(() => toast('Пароль скопирован'),
+        () => toast('Скопируйте вручную — буфер недоступен'));
+    } else {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const sel = window.getSelection();
+      sel.removeAllRanges(); sel.addRange(range);
+      toast('Выделено — скопируйте сочетанием клавиш');
+    }
+  },
+  userCreate: () => {
+    const f = S.userForm;
+    if (!f.email.trim()) { toast('Укажите рабочую почту'); return; }
+    userAction('/api/users', { email: f.email, name: f.name, role: f.role }, '');
+    S.userForm = { email: '', name: '', role: f.role };
+  },
+  userReset: (id) => userAction('/api/users/' + id + '/reset', {}, ''),
+  userToggle: (id) => userAction('/api/users/' + id + '/toggle', {}, 'Готово'),
+  userSetRole: (arg) => {
+    const parts = String(arg).split('|');
+    userAction('/api/users/' + parts[0] + '/role', { role: parts[1] }, 'Роль изменена');
+  },
 
   rateSource: (key) => { const f = rateForm(); f.source = key; f.clients = []; f.vacancy = ''; f.preview = ''; render(); },
   rateStrategy: (key) => { const f = rateForm(); f.strategy = key; f.preview = ''; render(); },
@@ -2081,7 +2239,10 @@ const ACTIONS = {
   },
   delCancel: () => setState({ cpDelete: null, delPass: '', delErr: false }),
   delConfirm: () => {
-    if (S.delPass.trim() !== ADMIN_PASS) { setState({ delErr: true }); return; }
+    /* Раньше здесь сверялся пароль администратора, лежавший в этом же файле.
+       Пароля в браузере больше нет; сама операция и так закрыта ролью на
+       сервере, а от случайного клика защищает ввод названия. */
+    if (S.delPass.trim() !== S.cpDelete.name) { setState({ delErr: true }); return; }
     const cp = S.cpDelete;
     const linked = DATA.rows.some((r) => r.cp === cp.name);
     if (linked) { cp.archived = true; cp.excluded = true; toast('С контрагентом связаны заявки — перенесён в архив, связи сохранены'); }
@@ -2144,13 +2305,18 @@ function onFieldChange(el) {
     if (el.tagName === 'SELECT') render();
     return;
   }
+  if (key.indexOf('user:') === 0) {
+    // Как и у редактора контрагента: на каждый символ не перерисовываем,
+    // иначе поле теряет фокус посреди набора почты.
+    S.userForm[key.slice(5)] = value;
+    return;
+  }
   if (key.indexOf('cp:') === 0) {
     const d = Object.assign({}, S.cpEdit);
     d[key.slice(3)] = value;
     S.cpEdit = d;
     return;                       // редактор контрагента не перерисовываем на каждый символ
   }
-  if (key === 'authPass') { setState({ authPass: value, authErr: false }); return; }
   if (key === 'delPass') { setState({ delPass: value, delErr: false }); return; }
   if (TYPED_KEYS.indexOf(key) >= 0) {
     S[key] = value;
@@ -2175,8 +2341,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (e.key !== 'Escape') return;
-  if (S.authOpen) setState({ authOpen: false, authPass: '', authErr: false });
-  else if (S.cpDelete) setState({ cpDelete: null, delPass: '', delErr: false });
+  if (S.cpDelete) setState({ cpDelete: null, delPass: '', delErr: false });
   else if (S.cpMenu) setState({ cpMenu: null });
   else if (S.cpEdit) setState({ cpEdit: null });
   else if (S.modal) setState({ modal: null, copied: false });

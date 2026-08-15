@@ -363,6 +363,75 @@ VALUES ('counterparty', 'кнк', 'КНК', 1, 0, 'переименование 
 """)
 
 
+# --- v7: пользователи, роли, журнал входов -----------------------------------
+#
+# До сих пор учётная запись была одна и жила в переменных окружения: кто вошёл,
+# тот и администратор, а история правок писалась без автора. Теперь люди
+# заводятся в базе, каждому выдаётся роль, и каждая правка знает, чья она.
+#
+# Пароль администратор выдаёт временным: он живёт ограниченное время и работает
+# ровно один раз — при первом входе человек задаёт свой. Так администратор
+# перестаёт знать чужой пароль, а «кто это сделал» в журнале означает именно
+# того, чьё имя стоит.
+#
+# Учётка не удаляется никогда: увольнение — это is_active = 0. Иначе история
+# правок осталась бы с автором, которого больше нет ни в одной таблице.
+MIGRATIONS.append("""
+CREATE TABLE users (
+    user_id       TEXT PRIMARY KEY,              -- USR-0001
+    email         TEXT NOT NULL UNIQUE,          -- всегда в нижнем регистре
+    name          TEXT NOT NULL DEFAULT '',
+    password_hash TEXT NOT NULL DEFAULT '',
+    -- Временный пароль: сменить обязательно, и он протухает.
+    must_change_password INTEGER NOT NULL DEFAULT 0,
+    password_expires_at  TEXT,
+    is_active     INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL,
+    created_by    TEXT NOT NULL DEFAULT '',
+    disabled_at   TEXT,
+    disabled_by   TEXT NOT NULL DEFAULT '',
+    last_login_at TEXT
+);
+
+CREATE INDEX idx_users_active ON users(is_active);
+
+CREATE TABLE roles (
+    role  TEXT PRIMARY KEY,
+    title TEXT NOT NULL
+);
+
+INSERT INTO roles (role, title) VALUES
+    ('recruiter', 'Рекрутер'),
+    ('admin', 'Администратор');
+
+CREATE TABLE user_roles (
+    user_id    TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    role       TEXT NOT NULL REFERENCES roles(role),
+    granted_at TEXT NOT NULL,
+    granted_by TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (user_id, role)
+);
+
+-- Журнал входов: и удачных, и нет. Пароль сюда не попадает никогда.
+CREATE TABLE login_audit (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    at         TEXT NOT NULL,
+    email      TEXT NOT NULL DEFAULT '',
+    ip         TEXT NOT NULL DEFAULT '',
+    ok         INTEGER NOT NULL,
+    reason     TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX idx_login_audit_at ON login_audit(at);
+CREATE INDEX idx_login_audit_email ON login_audit(email);
+
+-- Автор правки. Раньше история изменений позиции писалась без него: видно,
+-- что поле поменялось, и непонятно, приём это сделал или человек.
+ALTER TABLE position_history ADD COLUMN changed_by TEXT NOT NULL DEFAULT '';
+""")
+
+
 @contextmanager
 def connect(db_path: str = None, readonly: bool = False) -> Iterator[sqlite3.Connection]:
     """Открывает соединение, накатывает миграции при первом обращении.

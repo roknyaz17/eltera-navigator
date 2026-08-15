@@ -39,14 +39,17 @@ def test_backup_is_made_before_upgrade(tmp_path):
             )
         db.reset_schema_cache()
 
-        # Откатываем версию: как будто база осталась на схеме постарше.
-        raw = sqlite3.connect(path)
-        raw.execute(f"PRAGMA user_version={len(db.MIGRATIONS) - 1}")
-        raw.commit()
-        raw.close()
-
-        with db.connect(path) as conn:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == len(db.MIGRATIONS)
+        # База уже на актуальной версии. Добавляем ещё одну миграцию — теперь
+        # для неё накат «ожидающий», и копия обязана появиться.
+        db.MIGRATIONS.append("CREATE TABLE _probe (x INTEGER);")
+        try:
+            with db.connect(path) as conn:
+                assert conn.execute("PRAGMA user_version").fetchone()[0] == len(db.MIGRATIONS)
+                assert conn.execute(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE name = '_probe'"
+                ).fetchone()[0] == 1
+        finally:
+            db.MIGRATIONS.pop()
 
         files = sorted(backups.iterdir())
         assert files, "копия перед миграцией не создана"
