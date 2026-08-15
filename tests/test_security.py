@@ -39,7 +39,9 @@ def _routes():
             if started and depth <= 0:
                 break
             k += 1
-        out.append((m.group(1).upper(), m.group(2), "verify_creds" in "\n".join(sig)))
+        body = "\n".join(sig)
+        out.append((m.group(1).upper(), m.group(2),
+                    "verify_creds" in body or "require_admin" in body))
     return out
 
 
@@ -185,9 +187,16 @@ def test_password_check_is_off_the_event_loop():
     """PBKDF2 — 0,3 с процессорного времени; в event loop это отказ в обслуживании."""
     source = open(APP_SOURCE, encoding="utf-8").read()
     handler = source.split("async def login_submit(")[1].split("\n@app.")[0]
-    assert "to_thread(auth.check_credentials" in handler, (
+    assert "await asyncio.to_thread(" in handler, (
         "проверка пароля выполняется в event loop"
     )
+    # Сама сверка пароля не должна вызываться напрямую из корутины.
+    inline = [
+        line for line in handler.split("\n")
+        if ("authenticate(" in line or "verify_password(" in line) and "to_thread" not in line
+        and not line.strip().startswith(("#", "person, why", "def "))
+    ]
+    assert not inline, f"сверка пароля вызывается в event loop: {inline}"
 
 
 def test_login_and_logout_check_origin():
@@ -289,3 +298,128 @@ def test_failed_basic_is_throttled_and_logged():
     body = source.split("def verify_creds(")[1].split("\n@app.")[0]
     assert "_throttle.register_failure" in body, "неудачный Basic не считается"
     assert "auth.log_login" in body, "неудачный Basic не пишется в журнал"
+
+
+# ------------------------------- матрица прав (решение C1a заказчика)
+
+# Что закрыто рекрутеру: справочники, ручной ввод, запуск прогонов, правила
+# ставок. Правила ставок правит только администратор — это сетка мотивации,
+# и менять её не должен тот, кто по ней получает.
+ADMIN_ONLY = {
+    ("POST", "/trigger/{name}"),
+    ("POST", "/run"),
+    ("POST", "/api/rates"),
+    ("DELETE", "/api/rates/{rule_id}"),
+    ("GET", "/registry/dictionaries"),
+    ("POST", "/registry/dictionaries/confirm"),
+    ("POST", "/registry/dictionaries/delete"),
+    ("POST", "/registry/dictionaries/confirm-all"),
+    ("GET", "/registry/manual"),
+    ("POST", "/registry/manual"),
+    ("GET", "/api/users"),
+    ("POST", "/api/users"),
+    ("POST", "/api/users/{user_id}/reset"),
+    ("POST", "/api/users/{user_id}/toggle"),
+    ("POST", "/api/users/{user_id}/role"),
+}
+
+# Доступно любому вошедшему, включая рекрутера.
+ANY_LOGGED_IN = {
+    ("GET", "/"), ("GET", "/navigator"), ("GET", "/api/navigator"),
+    ("GET", "/registry"), ("GET", "/api/registry"), ("GET", "/registry/export.csv"),
+    ("GET", "/registry/position/{position_id}"), ("POST", "/registry/position/{position_id}"),
+    ("GET", "/registry/{request_id}"), ("GET", "/vacancies"), ("GET", "/api/vacancies"),
+    ("GET", "/password"), ("POST", "/password"),
+}
+
+
+def _admin_routes():
+    source = open(APP_SOURCE, encoding="utf-8").read()
+    lines = source.split("\n")
+    out = set()
+    for i, line in enumerate(lines):
+        m = re.match(r'''@app\.(get|post|put|delete)\(['"]([^'"]+)['"]''', line)
+        if not m:
+            continue
+        j = i
+        while j < len(lines) and not lines[j].lstrip().startswith("async def"):
+            j += 1
+        sig, depth, started, k = [], 0, False, j
+        while k < len(lines):
+            sig.append(lines[k])
+            depth += lines[k].count("(") - lines[k].count(")")
+            if "(" in lines[k]:
+                started = True
+            if started and depth <= 0:
+                break
+            k += 1
+        if "require_admin" in "\n".join(sig):
+            out.add((m.group(1).upper(), m.group(2)))
+    return out
+
+
+def test_admin_only_routes_match_decision():
+    assert _admin_routes() == ADMIN_ONLY, (
+        "Матрица прав разошлась с решением заказчика (docs/OPEN-QUESTIONS.md, C1a).\n"
+        f"Лишние: {sorted(_admin_routes() - ADMIN_ONLY)}\n"
+        f"Потерянные: {sorted(ADMIN_ONLY - _admin_routes())}"
+    )
+
+
+def test_recruiter_keeps_access_to_work_screens():
+    """Рекрутеру закрыли лишнее, но не работу: подбор и карточка должны остаться."""
+    admin_only = _admin_routes()
+    for route in ANY_LOGGED_IN:
+        assert route not in admin_only, f"{route} закрыт рекрутеру, хотя это его работа"
+
+
+def test_password_change_is_available_to_everyone_logged_in():
+    """Смена своего пароля не может быть привилегией администратора.
+
+    Иначе рекрутер, вошедший по временному паролю, не сможет задать свой
+    и останется под паролем, который знает администратор.
+    """
+    assert ("GET", "/password") not in _admin_routes()
+    assert ("POST", "/password") not in _admin_routes()
+
+
+def test_last_admin_cannot_be_disabled():
+    """Иначе система останется без администратора: экран доступов закрыт этой же ролью."""
+    source = open(APP_SOURCE, encoding="utf-8").read()
+    handler = source.split("async def api_users_toggle(")[1].split("\n@app.")[0]
+    assert "count_admins" in handler, "нет защиты от отключения последнего администратора"
+    assert "Нельзя отключить самого себя" in handler
+
+
+def test_manual_edits_record_author():
+    """История правок без автора не отвечает на вопрос «кто это поставил»."""
+    source = open(os.path.join(ROOT, "registry", "queries.py"), encoding="utf-8").read()
+    handler = source.split("def update_manager_fields(")[1].split("\ndef ")[0]
+    assert "author" in handler
+    assert "position_history" in handler, "ручные правки не пишутся в историю"
+    assert "changed_by" in handler
+
+
+def test_people_data_is_not_in_navigator_payload():
+    """Список сотрудников и журнал входов не должны уезжать рекрутеру.
+
+    Данные лежат за отдельной ручкой /api/users, закрытой ролью админа,
+    а не в общем ответе /api/navigator, который получает каждый вошедший.
+    """
+    source = open(os.path.join(ROOT, "navigator_api.py"), encoding="utf-8").read()
+    for leak in ("login_audit", "list_users(", "password_hash"):
+        assert leak not in source, f"{leak} попал в общий ответ /api/navigator"
+
+
+def test_no_client_side_admin_password():
+    """Пароль администратора не может лежать в клиентском коде.
+
+    В рабочем шаблоне оставался ADMIN_PASS = '1207' из макета, а признак
+    входа в админку хранился в localStorage: любой вошедший рекрутер открывал
+    раздел через консоль браузера. Роль должна приходить с сервера.
+    """
+    template = open(os.path.join(ROOT, "templates", "navigator.html"), encoding="utf-8").read()
+    assert "ADMIN_PASS" not in template, "пароль администратора вернулся в клиентский код"
+    assert "1207" not in template, "демо-пароль макета вернулся в шаблон"
+    assert "eltera_navigator_admin_v1" not in template, "гейт админки снова в localStorage"
+    assert "DATA.me" in template, "экран не спрашивает роль у сервера"
