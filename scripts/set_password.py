@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from auth import hash_password, verify_password
 
-MIN_LENGTH = 12
+MIN_LENGTH = 4
 
 
 def ask_password(confirm: bool = True) -> str:

@@ -15,7 +15,10 @@
   * { box-sizing: border-box; }
   a { color: rgba(255,255,255,.4); text-decoration: none; }
   a:hover { color: #E6F2FF; }
+  /* Кольцо фокуса — для кнопок и ссылок. У полей ввода его нет: там про
+     фокус говорит цвет рамки, а два кольца сразу выглядят как дефект. */
   .authRoot :focus-visible { outline: 2px solid rgba(0,210,255,.75); outline-offset: 3px; border-radius: 8px; }
+  .authRoot .field:focus-visible { outline: none; }
   .authRoot input::placeholder { color: rgba(230,242,255,.4); }
   @keyframes authFade { from { opacity: 0; } to { opacity: 1; } }
   .liquid-glass {
@@ -55,6 +58,9 @@
     border-radius: 9999px; transition: color .2s, background .2s;
   }
   .toggle:hover { color: #fff; background: rgba(255,255,255,.05); }
+  /* Атрибут hidden обязан побеждать display:flex, иначе пустая плашка
+     с одной точкой висит на экране с самой загрузки страницы. */
+  .errorBox[hidden] { display: none; }
   .errorBox {
     display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: 12px;
     background: rgba(255,123,107,.1); border: 1px solid rgba(255,123,107,.28);
