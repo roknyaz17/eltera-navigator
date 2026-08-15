@@ -5,9 +5,13 @@ FastAPI-приложение со встроенным APScheduler и веб-с�
     uvicorn app:app --host 0.0.0.0 --port 8000
 
 Эндпоинты:
-    GET  /vacancies              — HTML со списком вакансий (Basic Auth).
-    GET  /health                 — статус приложения и планировщика.
+    GET  /login, POST /login     — вход по почте и паролю (форма, сессия в cookie).
+    POST /logout                 — выход.
+    GET  /navigator, /registry   — рабочие экраны (нужна сессия).
+    GET  /health                 — живость процесса, единственный открытый роут.
+    GET  /health/details         — состояние планировщика и задач.
     GET  /jobs                   — расписание + время следующего запуска.
+    GET  /metrics                — метрики Prometheus.
     POST /trigger/{name}         — запустить зарегистрированную задачу сейчас.
     POST /run?sources=...&reset= — запустить произвольную комбинацию.
 
@@ -17,9 +21,18 @@ FastAPI-приложение со встроенным APScheduler и веб-с�
     13:00  vahtapro                        без reset
     13:30  ametist                         без reset (окно 14 дн., снимок «Обновляем потребность»)
 
-Переменные окружения для веб-доступа:
-    WEB_USER       — логин для Basic Auth (страница /vacancies)
-    WEB_PASSWORD   — пароль
+Доступ. Людям — вход по форме, машинам — Basic.
+
+    SECRET_KEY          ключ подписи сессии: openssl rand -hex 32
+    AUTH_EMAIL          почта учётной записи
+    AUTH_PASSWORD_HASH  хеш пароля: python scripts/set_password.py
+    SESSION_DAYS        срок сессии, по умолчанию 30
+    LOGIN_MAX_ATTEMPTS  попыток входа с одного IP, по умолчанию 5
+    SESSION_COOKIE_SECURE=1  когда приложение за https
+
+    WEB_USER, WEB_PASSWORD   Basic для машинных клиентов (Prometheus → /metrics)
+    WEB_BASIC_ENABLED=0      выключить Basic, когда машины переведены
+    ENABLE_API_DOCS=1        включить /docs и /openapi.json на время отладки
 """
 
 import csv
@@ -32,7 +45,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from typing import List, Literal, Optional
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request
@@ -55,6 +68,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 
+import auth
 import metrics as M
 import navigator_api
 from pipeline import (
@@ -173,9 +187,15 @@ def _register_jobs() -> None:
 # Приложение, которое не может никого впустить, не должно подниматься вообще.
 
 REQUIRED_ENV = {
-    "WEB_USER": "логин доступа к веб-интерфейсу",
-    "WEB_PASSWORD": "пароль доступа к веб-интерфейсу",
+    "SECRET_KEY": "ключ подписи сессии (openssl rand -hex 32)",
+    "AUTH_EMAIL": "почта учётной записи для входа",
+    "AUTH_PASSWORD_HASH": "хеш пароля (python scripts/set_password.py)",
 }
+
+# Basic остаётся для машинных клиентов: им негде хранить cookie.
+# Сегодня это Prometheus, который скрейпит /metrics.
+# Выключается WEB_BASIC_ENABLED=0, когда людей переведут на вход по форме.
+BASIC_ENABLED = os.getenv("WEB_BASIC_ENABLED", "1").strip().lower() not in ("0", "false", "no")
 
 # Пароли, с которыми нельзя выходить в сеть: это значения из примеров и
 # инструкций, а не выбранные человеком.
@@ -199,6 +219,24 @@ def check_required_env() -> None:
         logger.warning(
             "[auth] WEB_PASSWORD — значение из примера. Смените его: "
             "приложение доступно из сети и защищено только этой парой."
+        )
+    if BASIC_ENABLED and password:
+        logger.warning(
+            "[auth] Basic-доступ по WEB_USER/WEB_PASSWORD ещё включён. "
+            "Он нужен Prometheus для /metrics; для людей есть вход по форме. "
+            "Когда машинные клиенты переведены — WEB_BASIC_ENABLED=0."
+        )
+    secret = os.getenv("SECRET_KEY", "").strip()
+    if len(secret) < 32:
+        raise RuntimeError(
+            f"SECRET_KEY короче 32 символов (сейчас {len(secret)}). Этим ключом "
+            "подписывается сессия: слабый ключ подбирается, и вход обходится "
+            "целиком. Сгенерируйте новый: openssl rand -hex 32"
+        )
+    if secret.lower() in WEAK_PASSWORDS or len(set(secret)) < 8:
+        raise RuntimeError(
+            "SECRET_KEY слишком однообразный или взят из примера. "
+            "Сгенерируйте: openssl rand -hex 32"
         )
 
 
@@ -232,32 +270,236 @@ app = FastAPI(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-# ---------- Basic Auth ----------
-security = HTTPBasic()
+# ---------- Вход ----------
+#
+# Два способа попасть внутрь:
+#   * сессия — подписанная cookie, её ставит форма входа. Для людей.
+#   * Basic — для машинных клиентов, которым негде хранить cookie.
+#     Сегодня это Prometheus со скрейпом /metrics.
+#
+# Раньше был только Basic, одна пара на всех, пароль в окружении открытым
+# текстом. Он остаётся включённым до тех пор, пока машинные клиенты не
+# переведены, и гасится WEB_BASIC_ENABLED=0.
+
+security = HTTPBasic(auto_error=False)
+_throttle = auth.LoginThrottle()
 
 
-def verify_creds(creds: HTTPBasicCredentials = Depends(security)) -> str:
+# X-Forwarded-For клиент подставляет сам. Пока приложение слушает напрямую,
+# доверять заголовку нельзя: любой перебирающий пароль просто меняет его на
+# каждом запросе и лимит попыток перестаёт существовать. Включается только
+# когда впереди действительно стоит прокси, который этот заголовок переписывает.
+TRUST_PROXY = os.getenv("TRUST_PROXY_HEADERS", "").strip().lower() in ("1", "true", "yes")
+
+
+def _client_ip(request: Request) -> str:
+    """IP клиента. Заголовку прокси верим, только если это разрешено явно."""
+    if TRUST_PROXY:
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "?"
+
+
+def _wants_html(request: Request) -> bool:
+    """Браузеру показываем форму входа, программе отвечаем 401."""
+    if request.url.path.startswith("/api/") or request.url.path in ("/metrics", "/jobs"):
+        return False
+    return "text/html" in request.headers.get("accept", "")
+
+
+# Роуты, куда пускаем по Basic. Это ровно то, что забирают программы:
+# Prometheus скрейпит /metrics, мониторинг смотрит /health/details и /jobs.
+# Раньше Basic открывал ВСЁ приложение — то есть слабый общий пароль давал
+# доступ к реестру и правилам ставок в обход формы входа и лимита попыток.
+BASIC_PATHS = {"/metrics", "/jobs", "/health/details"}
+
+
+def _basic_ok(request: Request, creds: Optional[HTTPBasicCredentials]) -> bool:
+    if not BASIC_ENABLED or creds is None:
+        return False
+    if request.url.path not in BASIC_PATHS:
+        return False
     expected_user = os.getenv("WEB_USER", "")
     expected_pwd = os.getenv("WEB_PASSWORD", "")
     if not expected_user or not expected_pwd:
-        # Сюда попасть нельзя: check_required_env() не даёт приложению стартовать
-        # без учётных данных. Оставлено как защита от изменения порядка старта.
-        # 503, а не 401: сервер не может аутентифицировать НИКОГО, и предлагать
-        # клиенту повторить с паролем — врать ему.
-        logger.error("[auth] WEB_USER / WEB_PASSWORD не настроены — доступ закрыт")
+        return False
+    return (
+        secrets.compare_digest(creds.username, expected_user)
+        and secrets.compare_digest(creds.password, expected_pwd)
+    )
+
+
+def verify_creds(
+        request: Request,
+        creds: Optional[HTTPBasicCredentials] = Depends(security),
+) -> str:
+    """Кто это. Сессия или Basic; иначе — на форму входа либо 401."""
+    session = auth.read_session(request.cookies.get(auth.COOKIE_NAME, ""))
+    if session:
+        # Отпечаток пароля в сессии должен совпадать с текущим: смена пароля
+        # обязана гасить все ранее выданные cookie, иначе украденная сессия
+        # переживает смену пароля и живёт весь свой срок.
+        config = auth.load_config()
+        if session.get("epoch") == auth.password_epoch(config.password_hash):
+            return str(session.get("email") or "")
+
+    if _basic_ok(request, creds):
+        return creds.username
+
+    if _wants_html(request):
+        target = request.url.path
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
         raise HTTPException(
-            status_code=503,
-            detail="Сервис не настроен: не заданы учётные данные доступа",
+            status_code=303,
+            detail="Требуется вход",
+            headers={"Location": f"/login?next={quote(target, safe='')}"},
         )
-    user_ok = secrets.compare_digest(creds.username, expected_user)
-    pwd_ok = secrets.compare_digest(creds.password, expected_pwd)
-    if not (user_ok and pwd_ok):
-        raise HTTPException(
-            status_code=401,
-            detail="Неверный логин или пароль",
-            headers={"WWW-Authenticate": "Basic"},
+
+    headers = {"WWW-Authenticate": "Basic"} if BASIC_ENABLED else {}
+    raise HTTPException(status_code=401, detail="Требуется вход", headers=headers)
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_form(request: Request, next: str = "/"):
+    """Форма входа. Уже вошедшего сразу отправляем дальше."""
+    if auth.read_session(request.cookies.get(auth.COOKIE_NAME, "")):
+        return RedirectResponse(_safe_next(next), status_code=303)
+    response = templates.TemplateResponse(
+        "login.html",
+        {"request": request, "next_url": _safe_next(next), "email": "", "error": "", "blocked": False},
+    )
+    # Форма входа не должна оседать в кеше браузера и промежуточных прокси.
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/login", response_class=HTMLResponse)
+async def login_submit(
+        request: Request,
+        email: str = Form(""),
+        password: str = Form(""),
+        next: str = Form("/"),
+):
+    import asyncio
+
+    config = auth.load_config()
+    ip = _client_ip(request)
+    target = _safe_next(next)
+
+    # Форму входа можно отправить с чужой страницы: сам вход она не даст,
+    # но пятью запросами выбьет офисный адрес в блокировку. Сверяем источник.
+    if not _same_origin(request):
+        auth.log_login(ok=False, email=email, ip=ip, reason="запрос с чужого источника")
+        raise HTTPException(403, "Запрос пришёл с чужой страницы")
+
+    def _fail(message: str, *, blocked: bool = False, status: int = 401):
+        return templates.TemplateResponse(
+            "login.html",
+            {"request": request, "next_url": target, "email": email, "error": message, "blocked": blocked},
+            status_code=status,
         )
-    return creds.username
+
+    wait = _throttle.blocked_for(ip)
+    if wait:
+        auth.log_login(ok=False, email=email, ip=ip, reason="превышен лимит попыток")
+        return _fail(
+            f"Слишком много попыток. Попробуйте через {wait // 60 + 1} мин.",
+            blocked=True, status=429,
+        )
+
+    if not config.configured:
+        auth.log_login(ok=False, email=email, ip=ip, reason="вход не настроен")
+        return _fail("Вход не настроен: не заданы AUTH_EMAIL и AUTH_PASSWORD_HASH.", status=503)
+
+    # PBKDF2 на 600 000 итераций — это ~0,3 с процессорного времени. В event
+    # loop такая проверка блокирует ВСЁ приложение: десяток запросов на /login
+    # от неавторизованного клиента кладёт и реестр, и прогоны.
+    ok, reason = await asyncio.to_thread(auth.check_credentials, email, password, config)
+    if not ok:
+        blocked_for = _throttle.register_failure(ip)
+        auth.log_login(ok=False, email=email, ip=ip, reason=reason)
+        if blocked_for:
+            return _fail(
+                f"Слишком много попыток. Попробуйте через {blocked_for // 60} мин.",
+                blocked=True, status=429,
+            )
+        left = _throttle.attempts_left(ip)
+        tail = f" Осталось попыток: {left}." if left <= 2 else ""
+        # Не уточняем, что именно неверно: иначе форма подсказывает,
+        # существует ли такая почта.
+        return _fail(f"Неверная почта или пароль.{tail}")
+
+    _throttle.register_success(ip)
+    auth.log_login(ok=True, email=email, ip=ip)
+    response = RedirectResponse(target, status_code=303)
+    response.set_cookie(
+        auth.COOKIE_NAME,
+        auth.issue_session(
+            config.email,
+            days=config.session_days,
+            epoch=auth.password_epoch(config.password_hash),
+        ),
+        max_age=config.session_days * 86400,
+        httponly=True,
+        samesite="lax",
+        secure=config.secure_cookie,
+        path="/",
+    )
+    return response
+
+
+@app.post("/logout")
+async def logout(request: Request):
+    """Выход: удаляем cookie у браузера.
+
+    Сессия не хранится на сервере, поэтому «выход» здесь — это указание
+    браузеру забыть cookie. Уже украденная копия останется действительной до
+    истечения срока; чтобы погасить её немедленно, надо сменить пароль —
+    отпечаток в сессии перестанет совпадать (см. auth.password_epoch).
+    Серверное хранилище сессий заведено отдельной задачей.
+    """
+    if not _same_origin(request):
+        raise HTTPException(403, "Запрос пришёл с чужой страницы")
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie(auth.COOKIE_NAME, path="/")
+    return response
+
+
+def _same_origin(request: Request) -> bool:
+    """Пришёл ли POST со страницы этого же приложения.
+
+    Полноценных CSRF-токенов в проекте пока нет (заведено отдельной задачей).
+    Сверка Origin закрывает практическую часть: чужая страница не сможет ни
+    выбить адрес в блокировку через /login, ни разлогинить через /logout.
+    Запрос без Origin и без Referer пропускаем: так ходят curl и мониторинг,
+    а браузер эти заголовки на POST-форме шлёт всегда.
+    """
+    origin = request.headers.get("origin", "")
+    if origin:
+        return origin.rstrip("/") == str(request.base_url).rstrip("/")
+    referer = request.headers.get("referer", "")
+    if referer:
+        return referer.startswith(str(request.base_url))
+    return True
+
+
+def _safe_next(value: str) -> str:
+    """Только внутренние адреса: иначе форма входа станет открытым редиректом.
+
+    Отбрасываем не только «//evil.com», но и «/\\evil.com»: часть браузеров
+    трактует обратный слэш как прямой, и такой адрес уводит на чужой домен.
+    Управляющие символы режем, чтобы нельзя было подклеить заголовок к ответу.
+    """
+    value = (value or "/").strip()
+    if not value.startswith("/"):
+        return "/"
+    if value.startswith("//") or value.startswith("/\\"):
+        return "/"
+    if any(ch in value for ch in ("\r", "\n", "\t", "\x00")):
+        return "/"
+    return value
 
 
 # ---------- Эндпоинты ----------
