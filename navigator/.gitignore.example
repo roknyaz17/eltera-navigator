@@ -1,0 +1,25 @@
+# секреты и локальные данные — в репозиторий не попадают
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+service-account*.json
+
+# данные и резервные копии
+data/
+backups/
+*.db
+*.sqlite3
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# редакторы и ОС
+.vscode/
+.idea/
+.DS_Store

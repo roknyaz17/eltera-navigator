@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&amp;display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; background: #0A0F1E; }
+    a { color: rgba(255,255,255,.4); text-decoration: none; }
+    a:hover { color: #E6F2FF; }
+    .authRoot, .authRoot * { font-family: 'Inter', system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; box-sizing: border-box; }
+    .authRoot :focus-visible { outline: 2px solid rgba(0,210,255,.75); outline-offset: 3px; border-radius: 8px; }
+    .authRoot input::placeholder { color: rgba(230,242,255,.4); }
+    @keyframes authFade { from { opacity: 0; } to { opacity: 1; } }
+    .liquid-glass {
+      background: rgba(255,255,255,0.008); background-blend-mode: luminosity;
+      backdrop-filter: blur(40px) saturate(1.3) brightness(1.06); -webkit-backdrop-filter: blur(40px) saturate(1.3) brightness(1.06);
+      border: none; box-shadow: inset 0 1px 1px rgba(255,255,255,0.3), inset 0 -1px 1px rgba(255,255,255,0.12), 0 30px 70px rgba(0,0,0,.4);
+      position: relative; overflow: hidden;
+    }
+    .liquid-glass::before {
+      content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1.4px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.45) 0%, rgba(255,255,255,0.15) 20%, rgba(255,255,255,0) 40%, rgba(255,255,255,0) 60%, rgba(255,255,255,0.15) 80%, rgba(255,255,255,0.45) 100%);
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none;
+    }
+    @media (max-width: 700px) {
+      .authRoot input, .authRoot select { font-size: 16px !important; }
+      .authRoot button { min-height: 42px; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+  </style>
+  <script src="eltera/account.js"></script>
+  <template id="__bundler_thumbnail">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#0A0F1E"></rect><rect x="28" y="44" width="44" height="32" rx="6" fill="none" stroke="#00d2ff" stroke-width="4"></rect><path d="M38 44v-8a12 12 0 0 1 24 0v8" fill="none" stroke="#00d2ff" stroke-width="4"></path><circle cx="50" cy="59" r="4" fill="#00d2ff"></circle></svg>
+  </template>
+</helmet>
+
+<div class="authRoot" data-screen-label="Вход в навигатор" style="min-height:100vh; position:relative; background:#0A0F1E; color:#E6F2FF; padding:clamp(20px,5vw,48px); display:flex; flex-direction:column; align-items:center; justify-content:center; overflow-x:hidden;">
+
+  <div style="position:fixed; inset:0; z-index:0; pointer-events:none; overflow:hidden;">
+    <video ref="{{ bgRef }}" autoplay="{{ true }}" loop="{{ true }}" muted="{{ true }}" playsinline="{{ true }}" preload="auto" src="assets/background-loop.mp4" style="width:100%; height:100%; object-fit:cover;"></video>
+    <div style="position:absolute; inset:0; background:rgba(0,0,0,.62);"></div>
+  </div>
+
+  <div style="position:relative; z-index:1; width:100%; max-width:428px; animation:authFade .5s cubic-bezier(.22,1,.36,1) both;">
+
+    <div style="text-align:center; margin-bottom:26px;">
+      <img src="eltera/ui_kits/landing/assets/logo.svg" alt="Eltera" style="height:44px; width:auto; display:block; margin:0 auto 14px;">
+      <div style="display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 12px; border-radius:9999px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12); margin-bottom:14px;">
+        <span style="width:6px; height:6px; border-radius:9999px; background:#A4F4FD;"></span>
+        <span style="font-size:12px; color:rgba(255,255,255,.7);">Навигатор</span>
+      </div>
+      <p style="margin:0 auto; max-width:34ch; color:rgba(255,255,255,.6); font-size:15px; line-height:1.55; font-weight:300;">{{ subtitle }}</p>
+    </div>
+
+    <div class="liquid-glass" style="border-radius:16px; padding:24px;">
+      <div style="position:relative;">
+
+        <sc-if value="{{ isFormStage }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex; flex-direction:column; gap:15px;">
+          <label style="display:block;">
+            <span style="display:block; font-size:12.5px; font-weight:600; color:rgba(255,255,255,.6); margin-bottom:7px;">Рабочая почта</span>
+            <div style="position:relative; display:flex; align-items:center;">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position:absolute; left:14px; pointer-events:none;"><rect x="2" y="4" width="20" height="16" rx="3"></rect><path d="m2 7 10 6 10-6"></path></svg>
+              <input value="{{ email }}" onInput="{{ setEmail }}" type="email" placeholder="you@company.com" style="width:100%; border:1px solid rgba(255,255,255,.15); background:transparent; border-radius:9999px; padding:13px 15px 13px 40px; color:#E6F2FF; font-size:15px; outline:none; transition:border-color .2s;" style-focus="border-color:#00d2ff;">
+            </div>
+          </label>
+
+          <label style="display:block;">
+            <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:7px;">
+              <span style="font-size:12.5px; font-weight:600; color:rgba(255,255,255,.6);">Пароль</span>
+              <sc-if value="{{ isLogin }}" hint-placeholder-val="{{ true }}"><a href="#" onClick="{{ openRecover }}" style="font-size:12px; color:#A4F4FD; font-weight:600;">Забыли пароль?</a></sc-if>
+            </div>
+            <div style="position:relative; display:flex; align-items:center;">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position:absolute; left:14px; pointer-events:none;"><rect x="3" y="11" width="18" height="10" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+              <input value="{{ password }}" onInput="{{ setPassword }}" type="{{ passType }}" placeholder="Минимум 8 символов" style="width:100%; border:1px solid rgba(255,255,255,.15); background:transparent; border-radius:9999px; padding:13px 44px 13px 40px; color:#E6F2FF; font-size:15px; outline:none; transition:border-color .2s;" style-focus="border-color:#00d2ff;">
+              <button onClick="{{ togglePass }}" aria-label="Показать пароль" style="position:absolute; right:10px; width:32px; height:32px; display:grid; place-items:center; border:0; background:transparent; color:rgba(255,255,255,.5); cursor:pointer; border-radius:9999px; transition:color .2s, background .2s;" style-hover="color:#fff; background:rgba(255,255,255,.05);">
+                <span style="{{ eyeOpenStyle }}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg></span>
+                <span style="{{ eyeOffStyle }}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c6.5 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68"></path><path d="M6.06 6.06A13.4 13.4 0 0 0 2 11s3.5 7 10 7a9 9 0 0 0 4.94-1.06"></path><path d="m2 2 20 20"></path></svg></span>
+              </button>
+            </div>
+          </label>
+
+          <sc-if value="{{ never }}" hint-placeholder-val="{{ false }}">
+            <label style="display:block;">
+              <span style="display:block; font-size:12.5px; font-weight:600; color:rgba(255,255,255,.6); margin-bottom:7px;">Роль в подборе</span>
+              <div style="position:relative; display:flex; align-items:center;">
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position:absolute; left:14px; pointer-events:none;"><rect x="2" y="7" width="20" height="14" rx="2"></rect><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                <select value="{{ role }}" onChange="{{ setRole }}" style="{{ roleStyle }}">
+                  <option value="" disabled="">Выберите роль</option>
+                  <option value="recruiter">Менеджер по подбору</option>
+                  <option value="lead">Руководитель подбора</option>
+                  <option value="admin">Администратор навигатора</option>
+                </select>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position:absolute; right:14px; pointer-events:none;"><path d="m6 9 6 6 6-6"></path></svg>
+              </div>
+            </label>
+
+            <label style="display:block;">
+              <span style="display:block; font-size:12.5px; font-weight:600; color:rgba(255,255,255,.6); margin-bottom:7px;">Код приглашения</span>
+              <div style="position:relative; display:flex; align-items:center;">
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position:absolute; left:14px; pointer-events:none;"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 9h4"></path><path d="M7 13h10"></path><path d="M7 17h10"></path></svg>
+                <input value="{{ invite }}" onInput="{{ setInvite }}" placeholder="Например, NAV-4821" style="width:100%; border:1px solid rgba(255,255,255,.15); background:transparent; border-radius:9999px; padding:13px 15px 13px 40px; color:#E6F2FF; font-size:15px; outline:none; transition:border-color .2s;" style-focus="border-color:#00d2ff;">
+              </div>
+              <span style="display:block; font-size:11.5px; color:rgba(255,255,255,.4); margin-top:7px; line-height:1.5;">Код выдаёт администратор навигатора. Без него доступ к базе позиций не открывается.</span>
+            </label>
+
+            <div style="display:flex; flex-direction:column; gap:10px; margin-top:2px;">
+              <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; font-size:12.5px; color:rgba(255,255,255,.6); line-height:1.5;">
+                <input type="checkbox" checked="{{ agreePdn }}" onChange="{{ setAgreePdn }}" style="margin-top:2px; width:16px; height:16px; flex:none; accent-color:#1E5BFF; cursor:pointer;">
+                <span>Даю согласие на обработку персональных данных согласно <a href="#" target="_blank" rel="noopener" style="color:#00d2ff;">Политике конфиденциальности</a> (152-ФЗ).</span>
+              </label>
+              <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; font-size:12.5px; color:rgba(255,255,255,.6); line-height:1.5;">
+                <input type="checkbox" checked="{{ agreeNda }}" onChange="{{ setAgreeNda }}" style="margin-top:2px; width:16px; height:16px; flex:none; accent-color:#1E5BFF; cursor:pointer;">
+                <span>Подтверждаю: условия контрагентов и ставки рекрутера — внутренняя информация и не передаются третьим лицам.</span>
+              </label>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ hasError }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex; align-items:flex-start; gap:8px; padding:10px 12px; border-radius:12px; background:rgba(255,123,107,.1); border:1px solid rgba(255,123,107,.28);">
+              <span style="width:6px; height:6px; margin-top:6px; flex:none; border-radius:9999px; background:#FF7B6B;"></span>
+              <span style="font-size:12.5px; line-height:1.5; color:#FF7B6B;">{{ errorText }}</span>
+            </div>
+          </sc-if>
+
+          <button onClick="{{ submit }}" disabled="{{ submitDisabled }}" style="{{ submitStyle }}" style-hover="background:#f5f5f5; transform:scale(1.02); box-shadow:0 8px 24px rgba(255,255,255,.15);">{{ submitLabel }}</button>
+
+          <p style="margin:2px 0 0; font-size:11.5px; line-height:1.55; color:rgba(255,255,255,.4); text-align:center;">Единая учётная запись Eltera — те же почта и пароль действуют в кабинете с оценками и в CRM Shellix.</p>
+
+          
+
+          
+        </div>
+        </sc-if>
+
+        <sc-if value="{{ isVerifyStage }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex; flex-direction:column; gap:16px; text-align:center;">
+            <div style="width:56px; height:56px; margin:0 auto; border-radius:16px; background:rgba(0,210,255,.1); border:1px solid rgba(0,210,255,.22); display:grid; place-items:center; color:#00d2ff;"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="3"></rect><path d="m2 7 10 6 10-6"></path></svg></div>
+            <div><h2 style="margin:0 0 6px; font-size:18px; font-weight:600; color:#fff;">Подтвердите почту</h2><p style="margin:0; font-size:13.5px; color:rgba(255,255,255,.6); line-height:1.55;">Мы отправили 6-значный код на <b style="color:#E6F2FF;">{{ email }}</b></p></div>
+            <input value="{{ code }}" onInput="{{ setCode }}" inputmode="numeric" placeholder="______" style="width:100%; text-align:center; letter-spacing:.5em; font-size:22px; font-weight:700; border:1px solid rgba(148,180,230,.2); background:rgba(10,15,30,.6); border-radius:12px; padding:14px; color:#E6F2FF; outline:none;" style-focus="border-color:#00d2ff;">
+            <button onClick="{{ verifySubmit }}" disabled="{{ verifyDisabled }}" style="{{ verifyBtnStyle }}">Подтвердить и открыть навигатор</button>
+            <div style="font-size:12.5px; color:rgba(255,255,255,.4);">{{ resendText }} <a href="#" onClick="{{ resend }}" style="{{ resendLinkStyle }}">Отправить повторно</a></div>
+            <a href="#" onClick="{{ backToForm }}" style="font-size:12.5px; color:rgba(255,255,255,.4);">← Изменить почту</a>
+            <p style="margin:0; font-size:11px; color:rgba(255,255,255,.4);">Прототип: введите любые 6 цифр.</p>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isRecoverStage }}" hint-placeholder-val="{{ false }}">
+          <sc-if value="{{ recoverForm }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex; flex-direction:column; gap:16px;">
+              <div style="text-align:center;"><h2 style="margin:0 0 6px; font-size:18px; font-weight:600; color:#fff;">Восстановление пароля</h2><p style="margin:0; font-size:13.5px; color:rgba(255,255,255,.6); line-height:1.55;">Укажите рабочую почту — пришлём ссылку для сброса пароля.</p></div>
+              <label style="display:block;">
+                <span style="display:block; font-size:12.5px; font-weight:600; color:rgba(255,255,255,.6); margin-bottom:7px;">Рабочая почта</span>
+                <input value="{{ recoverEmail }}" onInput="{{ setRecoverEmail }}" type="email" placeholder="you@company.com" style="width:100%; border:1px solid rgba(255,255,255,.15); background:transparent; border-radius:9999px; padding:13px 15px; color:#E6F2FF; font-size:15px; outline:none;" style-focus="border-color:#00d2ff;">
+              </label>
+              <button onClick="{{ recoverSubmit }}" style="{{ recoverBtnStyle }}">Отправить ссылку</button>
+              <a href="#" onClick="{{ backToLogin }}" style="text-align:center; font-size:12.5px; color:rgba(255,255,255,.4);">← Вернуться ко входу</a>
+            </div>
+          </sc-if>
+          <sc-if value="{{ recoverSent }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex; flex-direction:column; gap:16px; text-align:center;">
+              <div style="width:56px; height:56px; margin:0 auto; border-radius:16px; background:rgba(110,231,193,.12); border:1px solid rgba(110,231,193,.3); display:grid; place-items:center; color:#6EE7C1;"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></div>
+              <div><h2 style="margin:0 0 6px; font-size:18px; font-weight:600; color:#fff;">Письмо отправлено</h2><p style="margin:0; font-size:13.5px; color:rgba(255,255,255,.6); line-height:1.55;">Ссылка для сброса пароля отправлена на <b style="color:#E6F2FF;">{{ recoverEmail }}</b>. Проверьте входящие и спам.</p></div>
+              <button onClick="{{ backToLogin }}" style="width:100%; border:0; background:#fff; color:#000; font-size:.88rem; font-weight:600; padding:10px 32px; border-radius:100px; cursor:pointer;">Вернуться ко входу</button>
+            </div>
+          </sc-if>
+        </sc-if>
+      </div>
+    </div>
+
+    <sc-if value="{{ isFormStage }}" hint-placeholder-val="{{ true }}">
+    
+    </sc-if>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { mode: 'login', stage: 'form', name: '', email: '', password: '', showPass: false, role: '', invite: '', agreePdn: false, agreeNda: false, code: '', resendIn: 0, recoverEmail: '', recoverSent: false, error: '', tick: 0 };
+
+  _acc() { return (typeof window !== 'undefined' && window.ElteraAccount) || null; }
+
+  toLogin = () => this.setState({ mode: 'login', stage: 'form' });
+  toRegister = () => this.setState({ mode: 'register', stage: 'form' });
+  switchMode = (e) => { if (e && e.preventDefault) e.preventDefault(); this.setState({ mode: this.state.mode === 'login' ? 'register' : 'login', stage: 'form' }); };
+  setName = (e) => this.setState({ name: e.target.value });
+  setEmail = (e) => this.setState({ email: e.target.value, error: '' });
+  setPassword = (e) => this.setState({ password: e.target.value, error: '' });
+  setRole = (e) => this.setState({ role: e.target.value });
+  setInvite = (e) => this.setState({ invite: e.target.value.toUpperCase().slice(0, 12) });
+  setAgreePdn = (e) => this.setState({ agreePdn: e.target.checked });
+  setAgreeNda = (e) => this.setState({ agreeNda: e.target.checked });
+  togglePass = (e) => { if (e && e.preventDefault) e.preventDefault(); this.setState({ showPass: !this.state.showPass }); };
+  _open = () => { window.location.href = 'navigator.html'; };
+
+  // Единый вход: учётка одна на Навигатор, кабинет Eltera и CRM Shellix.
+  submit = (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const acc = this._acc();
+    if (!acc) { this._open(); return; }
+    const r = acc.signIn(this.state.email, this.state.password, 'navigator');
+    if (r.ok) { this._open(); return; }
+    this.setState({ error: r.error });
+  };
+
+  ssoLogin = (e) => { if (e && e.preventDefault) e.preventDefault(); this._open(); };
+  setCode = (e) => this.setState({ code: e.target.value.replace(/[^0-9]/g, '').slice(0, 6) });
+  verifySubmit = (e) => { if (e && e.preventDefault) e.preventDefault(); if (this.state.code.length === 6) this._open(); };
+  backToForm = (e) => { if (e && e.preventDefault) e.preventDefault(); this._stopResend(); this.setState({ stage: 'form' }); };
+  _startResend = () => { this._stopResend(); this.setState({ resendIn: 30 }); this._resendT = setInterval(() => { const n = (this.state.resendIn || 0) - 1; if (n <= 0) { this._stopResend(); this.setState({ resendIn: 0 }); } else { this.setState({ resendIn: n }); } }, 1000); };
+  _stopResend = () => { if (this._resendT) { clearInterval(this._resendT); this._resendT = null; } };
+  resend = (e) => { if (e && e.preventDefault) e.preventDefault(); if ((this.state.resendIn || 0) > 0) return; this._startResend(); };
+  openRecover = (e) => { if (e && e.preventDefault) e.preventDefault(); this.setState({ stage: 'recover', recoverSent: false, recoverEmail: this.state.email }); };
+  setRecoverEmail = (e) => this.setState({ recoverEmail: e.target.value });
+  recoverSubmit = (e) => { if (e && e.preventDefault) e.preventDefault(); if (/.+@.+\..+/.test(this.state.recoverEmail || '')) this.setState({ recoverSent: true }); };
+  // Сброс пароля меняет единую запись → новый пароль сразу действует во всех трёх системах.
+  backToLogin = (e) => { if (e && e.preventDefault) e.preventDefault(); this.setState({ stage: 'form', mode: 'login', recoverSent: false }); };
+  _bg = React.createRef();
+  componentDidMount() {
+    const acc = this._acc();
+    if (acc) {
+      // Сессия единая: если сотрудник уже вошёл в любой из продуктов — сразу в Навигатор.
+      if (acc.session() && acc.get().access.navigator) { this._open(); return; }
+      this._unsub = acc.subscribe(() => this.setState({ tick: this.state.tick + 1 }));
+    }
+    const v = this._bg.current;
+    if (!v) return;
+    v.muted = true; v.defaultMuted = true; v.playsInline = true;
+    const go = () => { const p = v.play(); if (p && p.catch) p.catch(() => {}); };
+    go();
+    v.addEventListener('canplay', go, { once: true });
+    this._kick = go;
+    document.addEventListener('click', go, { once: true });
+  }
+  componentWillUnmount() { this._stopResend(); if (this._kick) document.removeEventListener('click', this._kick); if (this._unsub) this._unsub(); }
+
+  renderVals() {
+    const s = this.state;
+    const isLogin = s.mode === 'login';
+
+    const tabBase = 'flex:1; display:inline-flex; align-items:center; justify-content:center; gap:6px; cursor:pointer; font-size:14px; font-weight:500; padding:10px 20px; border-radius:9999px; transition:background .2s;';
+    const activeTab = tabBase + ' border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.05); color:#fff;';
+    const idleTab = tabBase + ' border:1px solid transparent; background:transparent; color:rgba(255,255,255,.6);';
+
+    const emailOk = /.+@.+\..+/.test(s.email);
+    const submitDisabled = !(emailOk && s.password.length >= 8);
+
+    const acc = this._acc();
+    const account = acc ? acc.get() : { name: '' };
+    const errText = s.error === 'email' ? 'Учётная запись с такой почтой не найдена. Она общая для Навигатора, кабинета Eltera и Shellix.'
+      : s.error === 'password' ? 'Неверный пароль. Он тоже общий для всех трёх систем.'
+      : s.error === 'access' ? 'Учётная запись есть, но доступ к Навигатору не выдан — обратитесь к администратору.'
+      : '';
+    const roleStyle = 'width:100%; appearance:none; -webkit-appearance:none; border:1px solid rgba(148,180,230,.2); background:rgba(10,15,30,.6); border-radius:12px; padding:13px 40px; font-size:15px; outline:none; transition:border-color .2s; cursor:pointer; color:' + (s.role ? '#E6F2FF' : 'rgba(230,242,255,.4)') + ';';
+    const submitBase = 'width:100%; display:inline-flex; align-items:center; justify-content:center; border:none; border-radius:100px; font-size:0.88rem; font-weight:600; padding:10px 32px; transition:all .3s cubic-bezier(.22,1,.36,1); margin-top:2px;';
+    const submitStyle = submitBase + (submitDisabled
+      ? ' background:rgba(255,255,255,.4); color:rgba(0,0,0,.5); cursor:not-allowed;'
+      : ' background:#fff; color:#000; cursor:pointer;');
+
+    const stage = s.stage || 'form';
+    const verifyDisabled = s.code.length !== 6;
+    const verifyBtnStyle = submitBase + (verifyDisabled ? ' background:rgba(255,255,255,.4); color:rgba(0,0,0,.5); cursor:not-allowed;' : ' background:#fff; color:#000; cursor:pointer;');
+    const recoverOk = /.+@.+\..+/.test(s.recoverEmail || '');
+    const recoverBtnStyle = submitBase + (recoverOk ? ' background:#fff; color:#000; cursor:pointer;' : ' background:rgba(255,255,255,.4); color:rgba(0,0,0,.5); cursor:not-allowed;');
+    const resendActive = (s.resendIn || 0) === 0;
+
+    return {
+      bgRef: this._bg,
+      isLogin, isRegister: !isLogin,
+      subtitle: isLogin ? 'Войдите, чтобы подбирать позиции.' : 'Доступ к навигатору — по приглашению администратора.',
+      toLogin: this.toLogin, toRegister: this.toRegister,
+      loginTabStyle: isLogin ? activeTab : idleTab,
+      regTabStyle: !isLogin ? activeTab : idleTab,
+      name: s.name, setName: this.setName,
+      email: s.email, setEmail: this.setEmail,
+      password: s.password, setPassword: this.setPassword,
+      role: s.role, setRole: this.setRole, roleStyle,
+      invite: s.invite, setInvite: this.setInvite,
+      passType: s.showPass ? 'text' : 'password',
+      togglePass: this.togglePass,
+      eyeOpenStyle: s.showPass ? 'display:none;' : 'display:grid; place-items:center;',
+      eyeOffStyle: s.showPass ? 'display:grid; place-items:center;' : 'display:none;',
+      submit: this.submit, ssoLogin: this.ssoLogin, submitDisabled, submitStyle,
+      submitLabel: 'Войти',
+      switchPrompt: isLogin ? 'Нет доступа?' : 'Уже есть доступ?',
+      switchAction: isLogin ? 'Ввести код приглашения' : 'Войти',
+      switchMode: this.switchMode,
+      isFormStage: stage === 'form', isVerifyStage: stage === 'verify', isRecoverStage: stage === 'recover',
+      hasError: !!errText, errorText: errText,
+      accName: account.name,
+      agreePdn: s.agreePdn, agreeNda: s.agreeNda, setAgreePdn: this.setAgreePdn, setAgreeNda: this.setAgreeNda,
+      code: s.code, setCode: this.setCode, verifySubmit: this.verifySubmit, verifyDisabled, verifyBtnStyle,
+      backToForm: this.backToForm, resend: this.resend,
+      resendText: resendActive ? 'Не пришёл код?' : ('Повторная отправка через ' + s.resendIn + ' с ·'),
+      resendLinkStyle: resendActive ? 'color:#00d2ff; font-weight:600;' : 'color:rgba(255,255,255,.4); pointer-events:none;',
+      openRecover: this.openRecover, recoverForm: !s.recoverSent, recoverSent: s.recoverSent,
+      recoverEmail: s.recoverEmail, setRecoverEmail: this.setRecoverEmail, recoverSubmit: this.recoverSubmit, recoverBtnStyle,
+      backToLogin: this.backToLogin
+    };
+  }
+}
+</script>
+</body>
+</html>

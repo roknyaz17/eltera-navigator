@@ -1,21 +1,44 @@
+# секреты и локальные данные — в репозиторий не попадают
 .env
+.env.*
+!.env.example
 .qodo
 credentials.json
+service-account*.json
 # Пароли и ключи развёртывания (пароль скрейпа /metrics и т.п.)
 secrets/
-logs/
+*.pem
+*.key
 *.session
 *.session-journal
-prometheus-data/
-grafana-data/
-.venv2
-.venv/
-__pycache__/
-*.pyc
-.idea/
+
+# данные и резервные копии
 # Реестр заявок: база живёт в volume, в образ и репозиторий не попадает
 data/
+backups/
+logs/
 *.db
 *.db-wal
 *.db-shm
+*.sqlite3
+prometheus-data/
+grafana-data/
+
+# python
+__pycache__/
+*.pyc
+*.py[cod]
+.venv/
+.venv2
 .pytest_cache/
+
+# node (фронтенд-пакет navigator/)
+node_modules/
+navigator/dist/
+npm-debug.log*
+.npm
+
+# редакторы и ОС
+.vscode/
+.idea/
+.DS_Store
