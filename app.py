@@ -435,9 +435,19 @@ def require_admin(request: Request, user: str = Depends(verify_creds)) -> "users
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_form(request: Request, next: str = "/"):
-    """Форма входа. Уже вошедшего сразу отправляем дальше."""
-    if auth.read_session(request.cookies.get(auth.COOKIE_NAME, "")):
+    """Форма входа. Уже вошедшего сразу отправляем дальше.
+
+    Проверка здесь обязана быть ровно такой же строгой, как в verify_creds.
+    Раньше тут стоял голый read_session — только подпись и срок, без сверки
+    с базой. Из-за этого cookie с устаревшим отпечатком пароля выглядела
+    действительной для /login и недействительной для всех остальных роутов:
+    /navigator отправлял на /login, /login отправлял обратно, и браузер
+    зацикливался. Разная строгость на соседних роутах — это всегда петля.
+    """
+    if current_user(request) is not None:
         return RedirectResponse(_safe_next(next), status_code=303)
+
+    stale = bool(request.cookies.get(auth.COOKIE_NAME, ""))
     response = templates.TemplateResponse(
         request=request,
         name="login.html",
@@ -445,6 +455,10 @@ async def login_form(request: Request, next: str = "/"):
     )
     # Форма входа не должна оседать в кеше браузера и промежуточных прокси.
     response.headers["Cache-Control"] = "no-store"
+    if stale:
+        # Cookie есть, но не действует: гасим, чтобы браузер перестал её носить
+        # и не спотыкался о неё на каждом следующем запросе.
+        response.delete_cookie(auth.COOKIE_NAME, path="/")
     return response
 
 

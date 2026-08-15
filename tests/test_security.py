@@ -443,3 +443,28 @@ def test_all_template_responses_use_keyword_form():
         if not following.startswith("request="):
             bad.append(f"строка {i + 1}: {following[:50]}")
     assert not bad, "позиционная форма TemplateResponse — страница отдаст 500:\n" + "\n".join(bad)
+
+
+def test_login_form_checks_session_as_strictly_as_other_routes():
+    """Иначе получается петля редиректов и приложение недоступно.
+
+    /login проверял сессию голым read_session — только подпись и срок, без
+    сверки с базой. Cookie с устаревшим отпечатком пароля выглядела
+    действительной для /login и недействительной для остальных роутов:
+    /navigator отправлял на /login, /login отправлял обратно.
+    """
+    source = open(APP_SOURCE, encoding="utf-8").read()
+    handler = source.split("async def login_form(")[1].split("\n@app.")[0]
+    assert "current_user(request)" in handler, (
+        "/login проверяет сессию мягче остальных роутов — будет петля редиректов"
+    )
+    assert "auth.read_session(" not in handler, (
+        "/login снова смотрит на сессию в обход проверки пользователя в базе"
+    )
+
+
+def test_login_form_clears_stale_cookie():
+    """Недействующую cookie надо гасить, иначе браузер носит её до истечения срока."""
+    source = open(APP_SOURCE, encoding="utf-8").read()
+    handler = source.split("async def login_form(")[1].split("\n@app.")[0]
+    assert "delete_cookie" in handler, "протухшая cookie не гасится на форме входа"
