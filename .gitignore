@@ -1,6 +1,8 @@
 .env
 .qodo
 credentials.json
+# Пароли и ключи развёртывания (пароль скрейпа /metrics и т.п.)
+secrets/
 logs/
 *.session
 *.session-journal

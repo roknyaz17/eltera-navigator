@@ -11,8 +11,9 @@
 import os
 import sqlite3
 import threading
+from datetime import datetime
 from contextlib import contextmanager
-from typing import Iterator, List
+from typing import Iterator, List, Optional
 
 from loguru import logger
 
@@ -406,6 +407,10 @@ def _ensure_schema(path: str) -> None:
         try:
             current = conn.execute("PRAGMA user_version").fetchone()[0]
             if current < len(MIGRATIONS):
+                # Копия ДО первой миграции. Откатов у нас нет: SQLite не умеет
+                # DROP COLUMN в старых сборках, обратных скриптов в проекте
+                # тоже нет — единственный способ вернуться назад это файл.
+                backup_before_migration(conn, path, current, len(MIGRATIONS))
                 for version in range(current, len(MIGRATIONS)):
                     logger.info(f"[registry] применяю миграцию v{version + 1}")
                     conn.executescript(MIGRATIONS[version])
@@ -414,6 +419,39 @@ def _ensure_schema(path: str) -> None:
         finally:
             conn.close()
         _initialized.add(path)
+
+
+def backup_before_migration(conn: sqlite3.Connection, path: str, current: int, target: int) -> Optional[str]:
+    """Снимает копию базы перед накатом миграций. Возвращает путь к копии.
+
+    На пустой базе (user_version = 0 и ни одной таблицы) копировать нечего —
+    это первый запуск, а не апгрейд.
+
+    Копия делается штатным SQLite backup API, а не cp: он корректно работает
+    с WAL и с параллельно открытыми соединениями.
+    """
+    if current == 0:
+        tables = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchone()[0]
+        if not tables:
+            return None
+
+    backup_dir = os.getenv("BACKUP_DIR", "").strip() or os.path.join(
+        os.path.dirname(os.path.abspath(path)) or ".", "backups"
+    )
+    os.makedirs(backup_dir, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    name = f"{os.path.basename(path)}.v{current}-{stamp}.bak"
+    target_path = os.path.join(backup_dir, name)
+
+    logger.info(f"[registry] копия перед миграцией v{current} → v{target}: {target_path}")
+    dest = sqlite3.connect(target_path)
+    try:
+        conn.backup(dest)
+    finally:
+        dest.close()
+    return target_path
 
 
 def reset_schema_cache() -> None:

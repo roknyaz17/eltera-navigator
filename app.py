@@ -31,7 +31,7 @@ import secrets
 import sys
 import time
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import List, Literal, Optional
 from urllib.parse import urlencode
 
 from dotenv import load_dotenv
@@ -41,6 +41,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from pydantic import BaseModel, ConfigDict, Field
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -165,8 +166,45 @@ def _register_jobs() -> None:
         )
 
 
+# ---------- Проверка окружения на старте ----------
+#
+# Раньше отсутствие WEB_USER / WEB_PASSWORD всплывало как HTTP 500 на первом же
+# запросе — то есть через часы после деплоя и в виде «сервер сломался».
+# Приложение, которое не может никого впустить, не должно подниматься вообще.
+
+REQUIRED_ENV = {
+    "WEB_USER": "логин доступа к веб-интерфейсу",
+    "WEB_PASSWORD": "пароль доступа к веб-интерфейсу",
+}
+
+# Пароли, с которыми нельзя выходить в сеть: это значения из примеров и
+# инструкций, а не выбранные человеком.
+WEAK_PASSWORDS = {
+    "change_me_please", "change-me", "changeme", "change_me",
+    "password", "admin", "secret", "12345", "123456", "qwerty",
+}
+
+
+def check_required_env() -> None:
+    """Падает на старте, если приложение заведомо не сможет работать."""
+    missing = [f"{name} — {why}" for name, why in REQUIRED_ENV.items() if not os.getenv(name, "").strip()]
+    if missing:
+        raise RuntimeError(
+            "Не заданы обязательные переменные окружения:\n  "
+            + "\n  ".join(missing)
+            + "\nЗаполните .env (см. .env.example) и перезапустите."
+        )
+    password = os.getenv("WEB_PASSWORD", "")
+    if password.strip().lower() in WEAK_PASSWORDS:
+        logger.warning(
+            "[auth] WEB_PASSWORD — значение из примера. Смените его: "
+            "приложение доступно из сети и защищено только этой парой."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    check_required_env()
     _register_jobs()
     scheduler.start()
     M.APP_INFO.info({"version": "1.0", "jobs": ",".join(JOBS.keys())})
@@ -178,7 +216,17 @@ async def lifespan(app: FastAPI):
     logger.info("APScheduler остановлен.")
 
 
-app = FastAPI(title="Eltrea Bot", lifespan=lifespan)
+# Схема API наружу не публикуется: она описывает все роуты и тела запросов.
+# Включается на время отладки переменной ENABLE_API_DOCS=1.
+_API_DOCS = os.getenv("ENABLE_API_DOCS", "").strip().lower() in ("1", "true", "yes")
+
+app = FastAPI(
+    title="Eltrea Bot",
+    lifespan=lifespan,
+    docs_url="/docs" if _API_DOCS else None,
+    redoc_url="/redoc" if _API_DOCS else None,
+    openapi_url="/openapi.json" if _API_DOCS else None,
+)
 
 # Статика для веб-фронта (логотипы Eltera и пр., используется /navigator).
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -192,9 +240,14 @@ def verify_creds(creds: HTTPBasicCredentials = Depends(security)) -> str:
     expected_user = os.getenv("WEB_USER", "")
     expected_pwd = os.getenv("WEB_PASSWORD", "")
     if not expected_user or not expected_pwd:
+        # Сюда попасть нельзя: check_required_env() не даёт приложению стартовать
+        # без учётных данных. Оставлено как защита от изменения порядка старта.
+        # 503, а не 401: сервер не может аутентифицировать НИКОГО, и предлагать
+        # клиенту повторить с паролем — врать ему.
+        logger.error("[auth] WEB_USER / WEB_PASSWORD не настроены — доступ закрыт")
         raise HTTPException(
-            status_code=500,
-            detail="WEB_USER / WEB_PASSWORD не настроены в .env",
+            status_code=503,
+            detail="Сервис не настроен: не заданы учётные данные доступа",
         )
     user_ok = secrets.compare_digest(creds.username, expected_user)
     pwd_ok = secrets.compare_digest(creds.password, expected_pwd)
@@ -210,6 +263,17 @@ def verify_creds(creds: HTTPBasicCredentials = Depends(security)) -> str:
 # ---------- Эндпоинты ----------
 @app.get("/health")
 async def health() -> dict:
+    """Живость процесса. Открыт без авторизации — его дёргает healthcheck Docker.
+
+    Состав ответа намеренно минимальный: прежняя версия отдавала наружу список
+    фоновых задач, то есть состав источников и расписание прогонов.
+    Подробности — на /health/details, под авторизацией.
+    """
+    return {"status": "ok"}
+
+
+@app.get("/health/details")
+async def health_details(user: str = Depends(verify_creds)) -> dict:
     return {
         "status": "ok",
         "scheduler_running": scheduler.running,
@@ -277,7 +341,7 @@ def _refresh_snapshot_metrics(all_rows: list) -> None:
 
 
 @app.get("/metrics")
-async def metrics_endpoint() -> Response:
+async def metrics_endpoint(user: str = Depends(verify_creds)) -> Response:
     """Prometheus scrape endpoint. Перед отдачей обновляем snapshot-gauges."""
     try:
         all_rows = await _legacy_rows()
@@ -312,7 +376,7 @@ def _refresh_registry_metrics() -> None:
 
 
 @app.get("/jobs")
-async def list_jobs() -> dict:
+async def list_jobs(user: str = Depends(verify_creds)) -> dict:
     return {
         "jobs": [
             {
@@ -397,8 +461,40 @@ async def api_navigator(
     return JSONResponse(payload)
 
 
+class RateTierIn(BaseModel):
+    """Ступень лестницы «от N смен»."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    min_shifts: int = Field(0, alias="minShifts", ge=0, le=999)
+    amount: int = Field(0, ge=0, le=1_000_000)
+
+
+class RatesPayload(BaseModel):
+    """Тело POST /api/rates.
+
+    Раньше принимался сырой dict, и нечисловая сумма роняла обработчик с 500
+    вместо понятного 400: int('') падает уже внутри сборки правил.
+    Имена полей — как их шлёт форма админки (camelCase), поэтому alias.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    source: str
+    strategy: Literal["all", "shifts", "clients"] = "all"
+    amount: int = Field(0, ge=0, le=1_000_000)
+    tiers: List[RateTierIn] = Field(default_factory=list)
+    clients: List[str] = Field(default_factory=list)
+    vacancy: str = ""
+    note: str = ""
+    payout: str = ""
+    valid_from: str = Field("", alias="validFrom")
+    valid_to: str = Field("", alias="validTo")
+    dry_run: bool = Field(False, alias="dryRun")
+
+
 @app.post("/api/rates")
-async def api_rates_save(payload: dict, user: str = Depends(verify_creds)) -> JSONResponse:
+async def api_rates_save(payload: RatesPayload, user: str = Depends(verify_creds)) -> JSONResponse:
     """Выставление ставок рекрутёра из админки «Навигатора».
 
     Три стратегии — это три области действия одного и того же правила:
@@ -413,12 +509,10 @@ async def api_rates_save(payload: dict, user: str = Depends(verify_creds)) -> JS
     """
     import asyncio
 
-    source = str(payload.get("source") or "").strip()
+    source = payload.source.strip()
     if source not in ALL_SOURCES:
         raise HTTPException(400, f"Неизвестный контрагент: {source or '—'}")
-    strategy = str(payload.get("strategy") or "all").strip()
-    if strategy not in ("all", "shifts", "clients"):
-        raise HTTPException(400, f"Неизвестная стратегия: {strategy}")
+    strategy = payload.strategy
 
     def _work() -> dict:
         with registry_db.connect() as conn:
@@ -426,7 +520,7 @@ async def api_rates_save(payload: dict, user: str = Depends(verify_creds)) -> JS
             if not rules:
                 raise HTTPException(400, "Нечего сохранять: не заданы суммы")
             affected = _positions_affected(conn, rules)
-            if payload.get("dryRun"):
+            if payload.dry_run:
                 return {"ok": True, "dryRun": True, "rules": len(rules), "positions": affected}
             # Область переписывается целиком: в новой сетке контрагента может
             # не быть прежних ступеней, и они иначе остались бы висеть рядом.
@@ -452,21 +546,17 @@ async def api_rates_delete(rule_id: int, user: str = Depends(verify_creds)) -> J
     return JSONResponse(result)
 
 
-def _rate_rules_from_payload(source: str, strategy: str, payload: dict) -> List[rates.RateRule]:
+def _rate_rules_from_payload(source: str, strategy: str, payload: "RatesPayload") -> List[rates.RateRule]:
     """Форма админки → список правил. Ничего не додумывает: нет суммы — нет правила."""
     common = {
-        "note": str(payload.get("note") or "").strip(),
-        "payout": str(payload.get("payout") or "").strip(),
-        "valid_from": str(payload.get("validFrom") or "").strip(),
-        "valid_to": str(payload.get("validTo") or "").strip(),
+        "note": payload.note.strip(),
+        "payout": payload.payout.strip(),
+        "valid_from": payload.valid_from.strip(),
+        "valid_to": payload.valid_to.strip(),
     }
-    vacancy = str(payload.get("vacancy") or "").strip()
-    tiers = [
-        (int(item.get("minShifts") or 0), int(item.get("amount") or 0))
-        for item in (payload.get("tiers") or [])
-        if str(item.get("amount") or "").strip()
-    ]
-    amount = int(payload.get("amount") or 0)
+    vacancy = payload.vacancy.strip()
+    tiers = [(tier.min_shifts, tier.amount) for tier in payload.tiers if tier.amount]
+    amount = payload.amount
 
     if strategy == "all":
         if amount <= 0:
@@ -479,7 +569,7 @@ def _rate_rules_from_payload(source: str, strategy: str, payload: dict) -> List[
             for shifts, value in tiers if value > 0 and shifts > 0
         ]
 
-    clients = [str(name).strip() for name in (payload.get("clients") or []) if str(name).strip()]
+    clients = [name.strip() for name in payload.clients if name.strip()]
     if not clients:
         raise HTTPException(400, "Не выбран ни один объект")
     out: List[rates.RateRule] = []
