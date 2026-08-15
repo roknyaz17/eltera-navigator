@@ -5,6 +5,7 @@
 
 import re
 import sqlite3
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from registry.models import DATA_FIELDS, MANAGER_FIELDS
@@ -242,16 +243,46 @@ def update_manager_fields(
         conn: sqlite3.Connection,
         position_id: str,
         values: Dict[str, Any],
+        author: str = "",
 ) -> int:
-    """Правки менеджера. Приём данных эти поля не трогает никогда."""
+    """Правки менеджера. Приём данных эти поля не трогает никогда.
+
+    Каждое изменение уходит в position_history с автором. Раньше ручные правки
+    не записывались вообще: в истории были только диффы от новых ревизий заявки,
+    и «кто поставил этот статус» восстановить было нельзя.
+    """
     allowed = {k: v for k, v in values.items() if k in MANAGER_FIELDS}
     if not allowed:
         return 0
+
+    before = conn.execute(
+        f"SELECT {', '.join(allowed)} FROM positions WHERE position_id = ?", (position_id,)
+    ).fetchone()
+
     assignments = ", ".join(f"{name} = ?" for name in allowed)
     params = list(allowed.values()) + [position_id]
-    return conn.execute(
+    rowcount = conn.execute(
         f"UPDATE positions SET {assignments} WHERE position_id = ?", params
     ).rowcount
+
+    if rowcount and before is not None:
+        now = datetime.now().isoformat(timespec="seconds")
+        for name, new_value in allowed.items():
+            old_value = before[name]
+            # Пишем только то, что действительно изменилось: иначе каждое
+            # сохранение карточки плодит десяток пустых записей.
+            if (old_value or "") == (new_value or ""):
+                continue
+            conn.execute(
+                "INSERT INTO position_history "
+                "(position_id, request_id, field, old_value, new_value, changed_at, changed_by) "
+                "VALUES (?, '', ?, ?, ?, ?, ?)",
+                (position_id, name,
+                 None if old_value is None else str(old_value),
+                 None if new_value is None else str(new_value),
+                 now, author),
+            )
+    return rowcount
 
 
 def all_positions(conn: sqlite3.Connection, active_only: bool = False) -> List[sqlite3.Row]:

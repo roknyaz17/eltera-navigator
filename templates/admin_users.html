@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Доступы — Навигатор</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+  /* Оформление взято с экрана входа (templates/login.html): те же токены,
+     liquid-glass, пилюльные поля. Видеофона здесь нет намеренно — на рабочем
+     экране он мешает читать таблицу и тянет мегабайты на каждом открытии. */
+  html, body { margin: 0; padding: 0; background: #0A0F1E; }
+  body { font-family: 'Inter', system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; color: #E6F2FF; }
+  * { box-sizing: border-box; }
+  a { color: rgba(255,255,255,.4); text-decoration: none; }
+  a:hover { color: #E6F2FF; }
+  .adminRoot :focus-visible { outline: 2px solid rgba(0,210,255,.75); outline-offset: 3px; border-radius: 8px; }
+  .adminRoot input::placeholder { color: rgba(230,242,255,.4); }
+
+  .liquid-glass {
+    background: rgba(255,255,255,0.008); background-blend-mode: luminosity;
+    backdrop-filter: blur(40px) saturate(1.3) brightness(1.06);
+    -webkit-backdrop-filter: blur(40px) saturate(1.3) brightness(1.06);
+    border: none;
+    box-shadow: inset 0 1px 1px rgba(255,255,255,0.3), inset 0 -1px 1px rgba(255,255,255,0.12), 0 30px 70px rgba(0,0,0,.4);
+    position: relative; overflow: hidden;
+  }
+  .liquid-glass::before {
+    content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1.4px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.45) 0%, rgba(255,255,255,0.15) 20%, rgba(255,255,255,0) 40%, rgba(255,255,255,0) 60%, rgba(255,255,255,0.15) 80%, rgba(255,255,255,0.45) 100%);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none;
+  }
+  .card { border-radius: 16px; padding: 22px; margin-bottom: 18px; }
+  .cardTitle { margin: 0 0 4px; font-size: 15.5px; font-weight: 600; letter-spacing: .01em; }
+  .cardHint { margin: 0 0 16px; font-size: 12.5px; line-height: 1.55; color: rgba(255,255,255,.45); }
+
+  .field {
+    width: 100%; border: 1px solid rgba(255,255,255,.15); background: transparent;
+    border-radius: 9999px; padding: 12px 16px; color: #E6F2FF;
+    font-size: 15px; outline: none; transition: border-color .2s;
+  }
+  .field:focus { border-color: #00d2ff; }
+  select.field { appearance: none; cursor: pointer; padding-right: 34px;
+    background-image: linear-gradient(45deg, transparent 50%, rgba(230,242,255,.55) 50%), linear-gradient(135deg, rgba(230,242,255,.55) 50%, transparent 50%);
+    background-position: calc(100% - 18px) 55%, calc(100% - 13px) 55%;
+    background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+  /* Список ролей рисует сама ОС — на тёмном фоне пункты иначе белые по белому. */
+  select.field option { background: #0A0F1E; color: #E6F2FF; }
+  .fieldLabel { display: block; cursor: pointer; font-size: 12.5px; font-weight: 600; color: rgba(255,255,255,.6); margin-bottom: 7px; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    height: 40px; padding: 0 18px; border-radius: 9999px; border: 1px solid rgba(255,255,255,.15);
+    background: transparent; color: #E6F2FF; font: inherit; font-size: 13px; font-weight: 600;
+    cursor: pointer; white-space: nowrap; transition: background .2s, border-color .2s, color .2s, transform .2s;
+  }
+  .btn:hover { background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.3); }
+  .btn-primary { background: #fff; border-color: #fff; color: #0A0F1E; }
+  .btn-primary:hover { background: #f5f5f5; border-color: #f5f5f5; transform: scale(1.02); box-shadow: 0 8px 24px rgba(255,255,255,.15); }
+  .btn-danger { color: #FF7B6B; border-color: rgba(255,123,107,.35); }
+  .btn-danger:hover { background: rgba(255,123,107,.12); border-color: rgba(255,123,107,.6); color: #FF7B6B; }
+  .btn-sm { height: 34px; padding: 0 13px; font-size: 12.5px; }
+
+  .noteBox { display: flex; align-items: flex-start; gap: 9px; padding: 11px 14px; border-radius: 12px; margin-bottom: 16px; }
+  .noteBox .dot { width: 6px; height: 6px; margin-top: 6px; flex: none; border-radius: 9999px; }
+  .noteBox .text { font-size: 12.5px; line-height: 1.55; }
+  .noteError { background: rgba(255,123,107,.1); border: 1px solid rgba(255,123,107,.28); }
+  .noteError .dot { background: #FF7B6B; } .noteError .text { color: #FF7B6B; }
+  .noteOk { background: rgba(110,231,193,.09); border: 1px solid rgba(110,231,193,.26); }
+  .noteOk .dot { background: #6EE7C1; } .noteOk .text { color: #6EE7C1; }
+
+  .chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px;
+    border-radius: 9999px; font-size: 11.5px; font-weight: 600; white-space: nowrap;
+    background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12); color: rgba(255,255,255,.7); }
+  .chip .dot { width: 6px; height: 6px; border-radius: 9999px; flex: none; }
+  .chipAdmin { color: #A4F4FD; border-color: rgba(164,244,253,.3); background: rgba(164,244,253,.08); }
+  .chipLive { color: #6EE7C1; border-color: rgba(110,231,193,.3); background: rgba(110,231,193,.08); }
+  .chipOff { color: #64748B; border-color: rgba(100,116,139,.4); }
+  .chipWait { color: #D9A441; border-color: rgba(217,164,65,.32); background: rgba(217,164,65,.08); }
+
+  .mono { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; }
+  .muted { color: rgba(255,255,255,.45); }
+  .tiny { font-size: 11.5px; line-height: 1.5; }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead th { text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: rgba(255,255,255,.4); padding: 0 12px 10px; white-space: nowrap; }
+  tbody td { padding: 13px 12px; border-top: 1px solid rgba(255,255,255,.07); vertical-align: middle; font-size: 13.5px; }
+  /* Отключённая учётка остаётся в списке ради истории правок, но не должна
+     соперничать за внимание с действующими. */
+  tr.isOff td { opacity: .45; }
+  .rowActions { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; justify-content: flex-end; }
+  .inlineForm { display: flex; gap: 7px; align-items: center; }
+  .inlineForm select.field { width: auto; min-width: 150px; height: 34px; padding: 0 32px 0 13px; font-size: 12.5px; }
+  .scrollX { overflow-x: auto; }
+
+  .empty { padding: 26px 14px; text-align: center; font-size: 13px; line-height: 1.6; color: rgba(255,255,255,.45); }
+
+  .issuedCard { border-radius: 16px; padding: 22px; margin-bottom: 18px;
+    background: rgba(217,164,65,.06); border: 1px solid rgba(217,164,65,.32); }
+  .issuedPassword { display: block; font-size: clamp(22px, 5vw, 30px); font-weight: 700; letter-spacing: .06em;
+    color: #E6F2FF; word-break: break-all; user-select: all; }
+
+  @media (max-width: 700px) {
+    .adminRoot input, .adminRoot select, .adminRoot textarea { font-size: 16px !important; }
+    .adminRoot button { min-height: 40px; }
+    .btn-sm { height: 40px; }
+    .inlineForm select.field { height: 40px; flex: 1 1 auto; min-width: 0; }
+    /* Таблица людей превращается в карточки: на узком экране шесть колонок
+       либо режутся, либо уезжают в горизонтальную прокрутку. */
+    .people thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .people, .people tbody, .people tr, .people td { display: block; width: 100%; }
+    .people tr { border: 1px solid rgba(255,255,255,.1); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+    .people td { border-top: 0; padding: 5px 0; }
+    .people td + td { border-top: 1px solid rgba(255,255,255,.06); padding-top: 9px; margin-top: 4px; }
+    .people td[data-label]::before { content: attr(data-label); display: block; font-size: 10.5px;
+      letter-spacing: .06em; text-transform: uppercase; color: rgba(255,255,255,.35); margin-bottom: 4px; }
+    .rowActions { justify-content: flex-start; }
+    .inlineForm { width: 100%; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="adminRoot" style="min-height:100vh; background:#0A0F1E; padding:clamp(18px,4vw,40px) clamp(14px,4vw,40px); overflow-x:hidden;">
+<div style="max-width:1080px; margin:0 auto;">
+
+  {# Название роли по её коду: список ролей приходит из контекста, чтобы
+     шаблон не хранил вторую копию словаря ролей. #}
+  {%- macro role_title(code) -%}
+    {%- set ns = namespace(label=code) -%}
+    {%- for role_code, role_label in roles -%}
+      {%- if role_code == code %}{% set ns.label = role_label %}{% endif -%}
+    {%- endfor -%}
+    {{- ns.label -}}
+  {%- endmacro -%}
+
+  {# Даты приходят из базы в ISO. Разбирать их в шаблоне нечем, поэтому
+     переставляем куски строки: 2026-08-15T09:30:00 → 15.08.2026 09:30. #}
+  {%- macro when(value, with_time=True) -%}
+    {%- if value and value|length >= 10 -%}
+      {{ value[8:10] }}.{{ value[5:7] }}.{{ value[0:4] }}
+      {%- if with_time and value|length >= 16 %} {{ value[11:16] }}{% endif -%}
+    {%- else -%}—{%- endif -%}
+  {%- endmacro -%}
+
+  <!-- 1. Шапка -->
+  <header style="display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start; justify-content:space-between; margin-bottom:22px;">
+    <div>
+      <div style="display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 12px; border-radius:9999px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12); margin-bottom:10px;">
+        <span style="width:6px; height:6px; border-radius:9999px; background:#A4F4FD;"></span>
+        <span style="font-size:12px; color:rgba(255,255,255,.7);"><a href="/">Навигатор</a></span>
+      </div>
+      <h1 style="margin:0; font-size:clamp(24px,4vw,30px); font-weight:700; letter-spacing:-.01em;">Доступы</h1>
+      <p class="tiny muted" style="margin:7px 0 0; max-width:56ch;">
+        Учётные записи сотрудников, роли и журнал входов. Рекрутеру закрыты справочники,
+        ручной ввод, запуск прогонов и правила ставок.
+      </p>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+      <div style="text-align:right; line-height:1.4;">
+        <div style="font-size:13.5px; font-weight:600;">{{ current_user.title }}</div>
+        <div class="tiny muted">{{ current_user.email }}</div>
+      </div>
+      <span class="chip {% if current_user.is_admin %}chipAdmin{% endif %}">
+        {% if current_user.is_admin %}Администратор{% else %}Рекрутер{% endif %}
+      </span>
+      <form method="post" action="/logout">
+        <button type="submit" class="btn btn-sm">Выйти</button>
+      </form>
+    </div>
+  </header>
+
+  {% if error %}
+  <div class="noteBox noteError" role="alert" aria-live="assertive">
+    <span class="dot"></span><span class="text">{{ error }}</span>
+  </div>
+  {% endif %}
+  {% if notice %}
+  <div class="noteBox noteOk" role="status" aria-live="polite">
+    <span class="dot"></span><span class="text">{{ notice }}</span>
+  </div>
+  {% endif %}
+
+  <!-- 2. Временный пароль: показывается ровно один раз -->
+  {% if issued %}
+  <section class="issuedCard" aria-labelledby="issuedTitle">
+    <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:baseline; justify-content:space-between; margin-bottom:12px;">
+      <h2 id="issuedTitle" class="cardTitle" style="color:#D9A441; margin:0;">Временный пароль для {{ issued["email"] }}</h2>
+      <span class="chip chipWait">действует до {{ when(issued["expires_at"]) }}</span>
+    </div>
+
+    <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:16px 18px; border-radius:14px; background:rgba(0,0,0,.32); border:1px solid rgba(255,255,255,.1);">
+      <code class="mono issuedPassword" id="issuedPassword">{{ issued["password"] }}</code>
+      <button type="button" class="btn btn-sm" id="copyPassword" style="margin-left:auto;">Скопировать</button>
+    </div>
+
+    <p class="tiny" style="margin:14px 0 0; color:rgba(230,242,255,.75); max-width:76ch;">
+      Пароль показан <strong>один раз</strong>: страница его больше не покажет, и восстановить
+      строку будет нельзя — останется только сбросить пароль заново. Передайте его сотруднику
+      лично. При первом входе он <strong>обязан</strong> задать свой пароль: до этого момента
+      временный работает, после смены — перестаёт. Если сотрудник не успеет войти до
+      {{ when(issued["expires_at"]) }}, пароль протухнет сам.
+    </p>
+  </section>
+  {% endif %}
+
+  <!-- 3. Добавить сотрудника -->
+  <section class="liquid-glass card" aria-labelledby="createTitle">
+    <h2 id="createTitle" class="cardTitle">Добавить сотрудника</h2>
+    <p class="cardHint">
+      Навигатор сам заведёт учётную запись и выдаст временный пароль на 48 часов.
+      Показан он будет один раз — сразу после создания.
+    </p>
+    <form method="post" action="/admin/users/create"
+          style="display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; align-items:end;">
+      <div>
+        <label class="fieldLabel" for="newEmail">Рабочая почта</label>
+        <input class="field" type="email" name="email" id="newEmail" placeholder="name@eltera.ru"
+               autocomplete="off" required>
+      </div>
+      <div>
+        <label class="fieldLabel" for="newName">Имя</label>
+        <input class="field" type="text" name="name" id="newName" placeholder="Иван Петров"
+               autocomplete="off" required>
+      </div>
+      <div>
+        <label class="fieldLabel" for="newRole">Роль</label>
+        <select class="field" name="role" id="newRole">
+          {% for role_code, role_label in roles %}
+          <option value="{{ role_code }}">{{ role_label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <button type="submit" class="btn btn-primary" style="width:100%;">Завести и выдать пароль</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- 4. Люди -->
+  <section class="liquid-glass card" aria-labelledby="peopleTitle">
+    <h2 id="peopleTitle" class="cardTitle">Сотрудники</h2>
+    <p class="cardHint">
+      Уволенные не удаляются, а отключаются: их имя остаётся автором в истории правок.
+    </p>
+
+    {% if people %}
+    <div class="scrollX">
+      <table class="people">
+        <thead>
+          <tr>
+            <th>Сотрудник</th>
+            <th>Роль</th>
+            <th>Состояние</th>
+            <th>Последний вход</th>
+            <th>Заведён</th>
+            <th style="text-align:right;">Действия</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for person in people %}
+          {# У самого себя кнопку отключения не показываем: администратор
+             выбил бы себе вход прямо посреди работы. #}
+          {% set is_self = person.email == current_user.email or person.user_id == current_user.user_id %}
+          <tr class="{% if not person.is_active %}isOff{% endif %}">
+            <td data-label="Сотрудник">
+              <div style="font-weight:600;">
+                {{ person.title }}{% if is_self %}<span class="muted" style="font-weight:400;"> — это вы</span>{% endif %}
+              </div>
+              <div class="tiny muted mono">{{ person.email }}</div>
+            </td>
+
+            <td data-label="Роль">
+              <span class="chip {% if person.is_admin %}chipAdmin{% endif %}">
+                {% for code in person.roles %}{{ role_title(code) }}{% if not loop.last %}, {% endif %}{% else %}без роли{% endfor %}
+              </span>
+              <form method="post" action="/admin/users/{{ person.user_id }}/role" class="inlineForm" style="margin-top:8px;">
+                <label class="fieldLabel" for="role-{{ person.user_id }}" style="position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0);">Роль сотрудника {{ person.title }}</label>
+                <select class="field" name="role" id="role-{{ person.user_id }}">
+                  {% for role_code, role_label in roles %}
+                  <option value="{{ role_code }}" {% if role_code in person.roles %}selected{% endif %}>{{ role_label }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-sm">Сменить</button>
+              </form>
+            </td>
+
+            <td data-label="Состояние">
+              {% if person.is_active %}
+              <span class="chip chipLive"><span class="dot" style="background:#6EE7C1;"></span>действует</span>
+              {% if person.must_change_password %}
+              <div style="margin-top:6px;">
+                <span class="chip chipWait">временный пароль{% if person.password_expires_at %} до {{ when(person.password_expires_at) }}{% endif %}</span>
+              </div>
+              {% endif %}
+              {% else %}
+              <span class="chip chipOff"><span class="dot" style="background:#64748B;"></span>отключён</span>
+              <div class="tiny muted" style="margin-top:6px;">с {{ when(person.disabled_at) }}</div>
+              {% endif %}
+            </td>
+
+            <td data-label="Последний вход">
+              {% if person.last_login_at %}
+              <span class="tiny">{{ when(person.last_login_at) }}</span>
+              {% else %}
+              <span class="tiny muted">ещё не входил</span>
+              {% endif %}
+            </td>
+
+            <td data-label="Заведён">
+              <div class="tiny">{{ when(person.created_at, False) }}</div>
+              <div class="tiny muted">{{ person.created_by or "—" }}</div>
+            </td>
+
+            <td data-label="Действия">
+              <div class="rowActions">
+                <form method="post" action="/admin/users/{{ person.user_id }}/reset">
+                  <button type="submit" class="btn btn-sm">Сбросить пароль</button>
+                </form>
+                {% if not is_self %}
+                <form method="post" action="/admin/users/{{ person.user_id }}/toggle">
+                  {% if person.is_active %}
+                  <button type="submit" class="btn btn-sm btn-danger">Отключить</button>
+                  {% else %}
+                  <button type="submit" class="btn btn-sm">Вернуть</button>
+                  {% endif %}
+                </form>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if people|length < 2 %}
+    <p class="empty">
+      Пока заведён только один администратор.<br>
+      Добавьте сотрудников формой выше — каждый получит свой вход и свою роль.
+    </p>
+    {% endif %}
+  </section>
+
+  <!-- 5. Журнал входов -->
+  <section class="liquid-glass card" aria-labelledby="journalTitle">
+    <h2 id="journalTitle" class="cardTitle">Журнал входов</h2>
+    <p class="cardHint">Последние попытки: удачные и отказы. Пароли в журнал не попадают.</p>
+
+    {% if journal %}
+    <div class="scrollX">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:1%;"></th>
+            <th>Когда</th>
+            <th>Почта</th>
+            <th>Адрес</th>
+            <th>Итог</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in journal %}
+          <tr>
+            <td style="padding-right:0;">
+              <span class="dot" style="display:block; width:7px; height:7px; border-radius:9999px; background:{% if row['ok'] %}#6EE7C1{% else %}#FF7B6B{% endif %};"
+                    aria-hidden="true"></span>
+            </td>
+            <td style="white-space:nowrap;">{{ when(row["at"]) }}</td>
+            <td class="mono" style="font-size:12.5px;">{{ row["email"] or "—" }}</td>
+            <td class="mono muted" style="font-size:12.5px;">{{ row["ip"] or "—" }}</td>
+            <td>
+              {% if row["ok"] %}
+              <span style="color:#6EE7C1;">вход выполнен</span>
+              {% else %}
+              <span style="color:#FF7B6B;">отказ{% if row["reason"] %} — {{ row["reason"] }}{% endif %}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty">Входов ещё не было.</p>
+    {% endif %}
+  </section>
+
+</div>
+</div>
+
+<script>
+  /* Единственный скрипт на странице — копирование временного пароля.
+     Всё остальное делают обычные формы, чтобы экран работал и без JS.
+     Пароль берём из DOM, а не из подставленной в код строки: так его не нужно
+     экранировать вторым способом. Приложение отдаётся по http, где
+     navigator.clipboard недоступен, поэтому нужен запасной путь через выделение. */
+  (function () {
+    var button = document.getElementById('copyPassword');
+    var holder = document.getElementById('issuedPassword');
+    if (!button || !holder) return;
+
+    function report(text) {
+      button.textContent = text;
+      setTimeout(function () { button.textContent = 'Скопировать'; }, 1800);
+    }
+
+    function selectAndCopy() {
+      var range = document.createRange();
+      range.selectNodeContents(holder);
+      var selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      report(ok ? 'Скопировано' : 'Выделено — скопируйте вручную');
+    }
+
+    button.addEventListener('click', function () {
+      var value = holder.textContent.trim();
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(value).then(function () { report('Скопировано'); }, selectAndCopy);
+      } else {
+        selectAndCopy();
+      }
+    });
+  })();
+</script>
+</body>
+</html>

@@ -255,7 +255,9 @@ def load_config() -> AuthConfig:
     return AuthConfig(
         email=os.getenv("AUTH_EMAIL", "").strip().lower(),
         password_hash=os.getenv("AUTH_PASSWORD_HASH", "").strip(),
-        session_days=int(os.getenv("SESSION_DAYS", "30") or 30),
+        # 7 дней — решение заказчика: входить раз в неделю не обременительно,
+        # а украденный ноутбук не даёт доступ на месяц.
+        session_days=int(os.getenv("SESSION_DAYS", "7") or 7),
         max_attempts=int(os.getenv("LOGIN_MAX_ATTEMPTS", "5") or 5),
         # За nginx с https ставить 1. По умолчанию 0: приложение сейчас
         # отдаётся по http, и cookie с Secure просто не долетит.

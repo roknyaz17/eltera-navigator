@@ -26,7 +26,7 @@ FastAPI-приложение со встроенным APScheduler и веб-с�
     SECRET_KEY          ключ подписи сессии: openssl rand -hex 32
     AUTH_EMAIL          почта учётной записи
     AUTH_PASSWORD_HASH  хеш пароля: python scripts/set_password.py
-    SESSION_DAYS        срок сессии, по умолчанию 30
+    SESSION_DAYS        срок сессии, по умолчанию 7
     LOGIN_MAX_ATTEMPTS  попыток входа с одного IP, по умолчанию 5
     SESSION_COOKIE_SECURE=1  когда приложение за https
 
@@ -70,6 +70,7 @@ from loguru import logger
 
 import auth
 import metrics as M
+import users as users_mod
 import navigator_api
 from pipeline import (
     ALL_SOURCES,
@@ -346,19 +347,47 @@ def _basic_ok(request: Request, creds: Optional[HTTPBasicCredentials]) -> bool:
     )
 
 
+def current_user(request: Request) -> Optional["users_mod.User"]:
+    """Сотрудник из сессии, если она действительна.
+
+    Пользователь читается из базы на каждом запросе, а не берётся из cookie:
+    отключение сотрудника и смена роли должны действовать немедленно, а не
+    через неделю, когда истечёт его сессия.
+    """
+    session = auth.read_session(request.cookies.get(auth.COOKIE_NAME, ""))
+    if not session:
+        return None
+    email = str(session.get("email") or "")
+    if not email:
+        return None
+    with registry_db.connect() as conn:
+        person = users_mod.get_by_email(conn, email)
+    if person is None or not person.is_active:
+        return None
+    # Отпечаток пароля: смена пароля гасит все ранее выданные cookie, иначе
+    # украденная сессия переживает смену пароля и живёт весь свой срок.
+    if session.get("epoch") != auth.password_epoch(person.password_hash):
+        return None
+    return person
+
+
 def verify_creds(
         request: Request,
         creds: Optional[HTTPBasicCredentials] = Depends(security),
 ) -> str:
     """Кто это. Сессия или Basic; иначе — на форму входа либо 401."""
-    session = auth.read_session(request.cookies.get(auth.COOKIE_NAME, ""))
-    if session:
-        # Отпечаток пароля в сессии должен совпадать с текущим: смена пароля
-        # обязана гасить все ранее выданные cookie, иначе украденная сессия
-        # переживает смену пароля и живёт весь свой срок.
-        config = auth.load_config()
-        if session.get("epoch") == auth.password_epoch(config.password_hash):
-            return str(session.get("email") or "")
+    person = current_user(request)
+    if person is not None:
+        if person.must_change_password and not request.url.path.startswith("/password"):
+            # Пока временный пароль не сменён, дальше не пускаем: иначе человек
+            # так и работает под паролем, который знает администратор.
+            raise HTTPException(
+                status_code=303,
+                detail="Требуется смена пароля",
+                headers={"Location": "/password"},
+            )
+        request.state.user = person
+        return person.email
 
     if _basic_ok(request, creds):
         return creds.username
@@ -385,6 +414,23 @@ def verify_creds(
 
     headers = {"WWW-Authenticate": "Basic"} if BASIC_ENABLED else {}
     raise HTTPException(status_code=401, detail="Требуется вход", headers=headers)
+
+
+def require_admin(request: Request, user: str = Depends(verify_creds)) -> "users_mod.User":
+    """Роут только для администратора.
+
+    Проверка на сервере, а не скрытие кнопки в вёрстке: рекрутеру закрыты
+    справочники, ручной ввод, запуск прогонов и правила ставок
+    (docs/OPEN-QUESTIONS.md, C1a).
+    """
+    person = getattr(request.state, "user", None)
+    if person is None:
+        # Вошли по Basic — это машинный клиент, ему в админские роуты нельзя.
+        raise HTTPException(403, "Доступ только для администратора")
+    if not person.is_admin:
+        logger.warning(f"[auth] {person.email} без роли администратора пытался открыть {request.url.path}")
+        raise HTTPException(403, "Доступ только для администратора")
+    return person
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -435,14 +481,23 @@ async def login_submit(
             blocked=True, status=429,
         )
 
-    if not config.configured:
-        auth.log_login(ok=False, email=email, ip=ip, reason="вход не настроен")
-        return _fail("Вход не настроен: не заданы AUTH_EMAIL и AUTH_PASSWORD_HASH.", status=503)
-
     # PBKDF2 на 600 000 итераций — это ~0,3 с процессорного времени. В event
     # loop такая проверка блокирует ВСЁ приложение: десяток запросов на /login
     # от неавторизованного клиента кладёт и реестр, и прогоны.
-    ok, reason = await asyncio.to_thread(auth.check_credentials, email, password, config)
+    def _check():
+        with registry_db.connect() as conn:
+            users_mod.bootstrap_from_env(conn)
+            person, why = users_mod.authenticate(conn, email, password)
+            users_mod.record_login(
+                conn, ok=person is not None, email=email, ip=ip, reason=why,
+                user_agent=request.headers.get("user-agent", ""),
+            )
+            if person is not None:
+                users_mod.touch_login(conn, person.user_id)
+            return person, why
+
+    person, reason = await asyncio.to_thread(_check)
+    ok = person is not None
     if not ok:
         blocked_for = _throttle.register_failure(ip)
         _global_throttle.register_failure(GLOBAL_KEY)
@@ -459,14 +514,18 @@ async def login_submit(
         return _fail(f"Неверная почта или пароль.{tail}")
 
     _throttle.register_success(ip)
-    auth.log_login(ok=True, email=email, ip=ip)
+    auth.log_login(ok=True, email=person.email, ip=ip)
+    # Временный пароль сменить обязательно, поэтому ведём не на запрошенную
+    # страницу, а на смену пароля: verify_creds всё равно туда развернёт.
+    if person.must_change_password:
+        target = "/password"
     response = RedirectResponse(target, status_code=303)
     response.set_cookie(
         auth.COOKIE_NAME,
         auth.issue_session(
-            config.email,
+            person.email,
             days=config.session_days,
-            epoch=auth.password_epoch(config.password_hash),
+            epoch=auth.password_epoch(person.password_hash),
         ),
         max_age=config.session_days * 86400,
         httponly=True,
@@ -662,7 +721,7 @@ async def list_jobs(user: str = Depends(verify_creds)) -> dict:
 async def trigger_job(
         name: str,
         background: BackgroundTasks,
-        user: str = Depends(verify_creds),
+        admin: "users_mod.User" = Depends(require_admin),
 ) -> dict:
     if name not in JOBS:
         raise HTTPException(404, f"Неизвестная задача {name!r}. Доступны: {list(JOBS.keys())}")
@@ -676,7 +735,7 @@ async def run_custom(
         background: BackgroundTasks,
         sources: Optional[str] = None,
         reset: bool = False,
-        user: str = Depends(verify_creds),
+        admin: "users_mod.User" = Depends(require_admin),
 ) -> dict:
     try:
         parsed = parse_sources(sources)
@@ -684,6 +743,229 @@ async def run_custom(
         raise HTTPException(400, str(exc))
     background.add_task(_job_wrapper, f"manual({','.join(parsed)})", parsed, reset)
     return {"status": "started", "sources": parsed, "reset": reset}
+
+
+# ---------- Смена пароля ----------
+
+MIN_PASSWORD_LENGTH = 12
+
+
+@app.get("/password", response_class=HTMLResponse)
+async def password_form(request: Request, user: str = Depends(verify_creds)):
+    person = getattr(request.state, "user", None)
+    response = templates.TemplateResponse(
+        "password_change.html",
+        {"request": request, "email": user, "error": "",
+         "min_length": MIN_PASSWORD_LENGTH,
+         "forced": bool(person and person.must_change_password)},
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/password", response_class=HTMLResponse)
+async def password_submit(
+        request: Request,
+        password: str = Form(""),
+        password2: str = Form(""),
+        user: str = Depends(verify_creds),
+):
+    import asyncio
+
+    person = getattr(request.state, "user", None)
+    if person is None:
+        raise HTTPException(403, "Смена пароля недоступна машинным клиентам")
+    if not _same_origin(request):
+        raise HTTPException(403, "Запрос пришёл с чужой страницы")
+
+    def _fail(message: str):
+        return templates.TemplateResponse(
+            "password_change.html",
+            {"request": request, "email": user, "error": message,
+             "min_length": MIN_PASSWORD_LENGTH, "forced": person.must_change_password},
+            status_code=400,
+        )
+
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return _fail(f"Пароль короче {MIN_PASSWORD_LENGTH} символов")
+    if password != password2:
+        return _fail("Пароли не совпали")
+    if auth.verify_password(password, person.password_hash):
+        return _fail("Это прежний пароль. Задайте другой")
+
+    def _save():
+        with registry_db.connect() as conn:
+            users_mod.set_password(conn, person.user_id, password)
+            return users_mod.get(conn, person.user_id)
+
+    updated = await asyncio.to_thread(_save)
+    # Пароль сменился — прежние сессии обесценились, включая нашу.
+    # Выдаём новую сразу, чтобы человек не входил повторно.
+    config = auth.load_config()
+    response = RedirectResponse("/", status_code=303)
+    response.set_cookie(
+        auth.COOKIE_NAME,
+        auth.issue_session(updated.email, days=config.session_days,
+                           epoch=auth.password_epoch(updated.password_hash)),
+        max_age=config.session_days * 86400,
+        httponly=True, samesite="lax", secure=config.secure_cookie, path="/",
+    )
+    return response
+
+
+# ---------- Доступы ----------
+
+def _temp_password() -> str:
+    """Временный пароль, который не стыдно продиктовать вслух."""
+    return secrets.token_urlsafe(12)
+
+
+@app.get("/admin/users", response_class=HTMLResponse)
+async def admin_users(request: Request, admin: "users_mod.User" = Depends(require_admin)):
+    with registry_db.connect() as conn:
+        people = users_mod.list_users(conn)
+        journal = users_mod.recent_logins(conn, limit=50)
+    response = templates.TemplateResponse(
+        "admin_users.html",
+        {"request": request, "current_user": admin, "people": people, "journal": journal,
+         "roles": [(users_mod.ROLE_RECRUITER, "Рекрутер"), (users_mod.ROLE_ADMIN, "Администратор")],
+         "error": request.query_params.get("error", ""),
+         "notice": request.query_params.get("notice", ""),
+         "issued": None},
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/admin/users/create", response_class=HTMLResponse)
+async def admin_users_create(
+        request: Request,
+        email: str = Form(""),
+        name: str = Form(""),
+        role: str = Form(users_mod.ROLE_RECRUITER),
+        admin: "users_mod.User" = Depends(require_admin),
+):
+    import asyncio
+
+    if not _same_origin(request):
+        raise HTTPException(403, "Запрос пришёл с чужой страницы")
+    password = _temp_password()
+
+    def _work():
+        with registry_db.connect() as conn:
+            person = users_mod.create_user(
+                conn, email=email, name=name, role=role,
+                temp_password=password, created_by=admin.email,
+            )
+            return person, users_mod.list_users(conn), users_mod.recent_logins(conn, limit=50)
+
+    try:
+        person, people, journal = await asyncio.to_thread(_work)
+    except ValueError as exc:
+        return RedirectResponse(f"/admin/users?error={quote(str(exc), safe='')}", status_code=303)
+
+    # Пароль показывается ровно один раз и только здесь: в базе он уже хешем,
+    # в журнал и в логи не попадает.
+    return templates.TemplateResponse(
+        "admin_users.html",
+        {"request": request, "current_user": admin, "people": people, "journal": journal,
+         "roles": [(users_mod.ROLE_RECRUITER, "Рекрутер"), (users_mod.ROLE_ADMIN, "Администратор")],
+         "error": "", "notice": "",
+         "issued": {"email": person.email, "password": password,
+                    "expires_at": person.password_expires_at}},
+    )
+
+
+@app.post("/admin/users/{user_id}/reset", response_class=HTMLResponse)
+async def admin_users_reset(
+        request: Request, user_id: str,
+        admin: "users_mod.User" = Depends(require_admin),
+):
+    import asyncio
+
+    if not _same_origin(request):
+        raise HTTPException(403, "Запрос пришёл с чужой страницы")
+    password = _temp_password()
+
+    def _work():
+        with registry_db.connect() as conn:
+            person = users_mod.get(conn, user_id)
+            if person is None:
+                return None, [], []
+            users_mod.issue_temp_password(conn, user_id, temp_password=password, by=admin.email)
+            person = users_mod.get(conn, user_id)
+            return person, users_mod.list_users(conn), users_mod.recent_logins(conn, limit=50)
+
+    person, people, journal = await asyncio.to_thread(_work)
+    if person is None:
+        raise HTTPException(404, f"Сотрудник {user_id} не найден")
+    return templates.TemplateResponse(
+        "admin_users.html",
+        {"request": request, "current_user": admin, "people": people, "journal": journal,
+         "roles": [(users_mod.ROLE_RECRUITER, "Рекрутер"), (users_mod.ROLE_ADMIN, "Администратор")],
+         "error": "", "notice": "",
+         "issued": {"email": person.email, "password": password,
+                    "expires_at": person.password_expires_at}},
+    )
+
+
+@app.post("/admin/users/{user_id}/toggle")
+async def admin_users_toggle(
+        request: Request, user_id: str,
+        admin: "users_mod.User" = Depends(require_admin),
+):
+    import asyncio
+
+    if not _same_origin(request):
+        raise HTTPException(403, "Запрос пришёл с чужой страницы")
+
+    def _work() -> str:
+        with registry_db.connect() as conn:
+            person = users_mod.get(conn, user_id)
+            if person is None:
+                return "Сотрудник не найден"
+            if person.user_id == admin.user_id:
+                return "Нельзя отключить самого себя"
+            if person.is_active and person.is_admin and users_mod.count_admins(conn) <= 1:
+                # Иначе система останется без администратора и завести нового
+                # будет некому: экран доступов закрыт этой же ролью.
+                return "Это последний администратор — сначала назначьте другого"
+            users_mod.set_active(conn, user_id, not person.is_active, by=admin.email)
+            return ""
+
+    problem = await asyncio.to_thread(_work)
+    tail = f"?error={quote(problem, safe='')}" if problem else "?notice=Готово"
+    return RedirectResponse(f"/admin/users{tail}", status_code=303)
+
+
+@app.post("/admin/users/{user_id}/role")
+async def admin_users_role(
+        request: Request, user_id: str,
+        role: str = Form(users_mod.ROLE_RECRUITER),
+        admin: "users_mod.User" = Depends(require_admin),
+):
+    import asyncio
+
+    if not _same_origin(request):
+        raise HTTPException(403, "Запрос пришёл с чужой страницы")
+
+    def _work() -> str:
+        with registry_db.connect() as conn:
+            person = users_mod.get(conn, user_id)
+            if person is None:
+                return "Сотрудник не найден"
+            if (person.is_admin and role != users_mod.ROLE_ADMIN
+                    and users_mod.count_admins(conn) <= 1):
+                return "Это последний администратор — сначала назначьте другого"
+            try:
+                users_mod.set_role(conn, user_id, role, by=admin.email)
+            except ValueError as exc:
+                return str(exc)
+            return ""
+
+    problem = await asyncio.to_thread(_work)
+    tail = f"?error={quote(problem, safe='')}" if problem else "?notice=Роль изменена"
+    return RedirectResponse(f"/admin/users{tail}", status_code=303)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -763,7 +1045,7 @@ class RatesPayload(BaseModel):
 
 
 @app.post("/api/rates")
-async def api_rates_save(payload: RatesPayload, user: str = Depends(verify_creds)) -> JSONResponse:
+async def api_rates_save(payload: RatesPayload, admin: "users_mod.User" = Depends(require_admin)) -> JSONResponse:
     """Выставление ставок рекрутёра из админки «Навигатора».
 
     Три стратегии — это три области действия одного и того же правила:
@@ -794,20 +1076,20 @@ async def api_rates_save(payload: RatesPayload, user: str = Depends(verify_creds
             # Область переписывается целиком: в новой сетке контрагента может
             # не быть прежних ступеней, и они иначе остались бы висеть рядом.
             for scope in {(rule.source, rule.client, rule.vacancy) for rule in rules}:
-                rates.clear_scope(conn, scope[0], scope[1], scope[2], author=user)
-            saved = rates.save_rules(conn, rules, author=user)
+                rates.clear_scope(conn, scope[0], scope[1], scope[2], author=admin.email)
+            saved = rates.save_rules(conn, rules, author=admin.email)
             return {"ok": True, "rules": saved, "positions": affected}
 
     return JSONResponse(await asyncio.to_thread(_work))
 
 
 @app.delete("/api/rates/{rule_id}")
-async def api_rates_delete(rule_id: int, user: str = Depends(verify_creds)) -> JSONResponse:
+async def api_rates_delete(rule_id: int, admin: "users_mod.User" = Depends(require_admin)) -> JSONResponse:
     import asyncio
 
     def _work() -> dict:
         with registry_db.connect() as conn:
-            return {"ok": rates.delete_rule(conn, rule_id, author=user)}
+            return {"ok": rates.delete_rule(conn, rule_id, author=admin.email)}
 
     result = await asyncio.to_thread(_work)
     if not result["ok"]:
@@ -1090,7 +1372,7 @@ async def registry_export_csv(request: Request, user: str = Depends(verify_creds
 async def registry_dictionaries(
         request: Request,
         kind: str = registry_dicts.KIND_JOB_TITLE,
-        user: str = Depends(verify_creds),
+        admin: "users_mod.User" = Depends(require_admin),
 ):
     if kind not in registry_dicts.KINDS:
         kind = registry_dicts.KIND_JOB_TITLE
@@ -1116,7 +1398,7 @@ async def registry_dictionaries_confirm(
         kind: str = Form(...),
         alias: str = Form(...),
         canonical: str = Form(""),
-        user: str = Depends(verify_creds),
+        admin: "users_mod.User" = Depends(require_admin),
 ):
     with registry_db.connect() as conn:
         registry_dicts.confirm(conn, kind, alias, canonical)
@@ -1128,7 +1410,7 @@ async def registry_dictionaries_delete(
         kind: str = Form(...),
         alias: str = Form(...),
         canonical: str = Form(""),
-        user: str = Depends(verify_creds),
+        admin: "users_mod.User" = Depends(require_admin),
 ):
     with registry_db.connect() as conn:
         registry_dicts.remove(conn, kind, alias)
@@ -1138,7 +1420,7 @@ async def registry_dictionaries_delete(
 @app.post("/registry/dictionaries/confirm-all")
 async def registry_dictionaries_confirm_all(
         kind: str = Form(...),
-        user: str = Depends(verify_creds),
+        admin: "users_mod.User" = Depends(require_admin),
 ):
     with registry_db.connect() as conn:
         registry_dicts.confirm_all(conn, kind)
@@ -1146,7 +1428,7 @@ async def registry_dictionaries_confirm_all(
 
 
 @app.get("/registry/manual", response_class=HTMLResponse)
-async def registry_manual_form(request: Request, user: str = Depends(verify_creds)):
+async def registry_manual_form(request: Request, admin: "users_mod.User" = Depends(require_admin)):
     return templates.TemplateResponse(
         request=request, name="registry_manual.html", context={"result": None, "error": None},
     )
@@ -1158,7 +1440,7 @@ async def registry_manual_submit(
         counterparty: str = Form(...),
         text: str = Form(...),
         channel: str = Form(""),
-        user: str = Depends(verify_creds),
+        admin: "users_mod.User" = Depends(require_admin),
 ):
     """Заявка, вставленная руками, идёт через тот же приём, что и автоматические."""
     from vacancy_parser import VacancyParserService
@@ -1179,7 +1461,7 @@ async def registry_manual_submit(
         raw_text=raw_text,
         source_name=f"Вручную ({channel})" if channel else "Вручную",
         counterparty_hint=counterparty.strip(),
-        raw_payload={"channel": channel, "entered_by": user},
+        raw_payload={"channel": channel, "entered_by": admin.email},
         field_defaults={"counterparty": counterparty.strip()},
     )
     raw.source_ref = f"manual:{raw.content_hash[:16]}"
@@ -1260,7 +1542,7 @@ async def registry_position_save(
             "responsible_manager": responsible_manager.strip() or None,
             "recruiter_comment": recruiter_comment.strip() or None,
             "market_rate": market_rate_value,
-        })
+        }, author=user)
     return RedirectResponse("/registry", status_code=303)
 
 
