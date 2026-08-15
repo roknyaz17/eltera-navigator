@@ -41,6 +41,10 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Пароль для скрейпа /metrics. Файл создаётся при развёртывании:
+      #   mkdir -p secrets && printf '%s' "$WEB_PASSWORD" > secrets/web_password
+      # В репозиторий не попадает (secrets/ в .gitignore).
+      - ./secrets/web_password:/etc/prometheus/web_password:ro
       - prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"

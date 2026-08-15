@@ -5,5 +5,12 @@ global:
 scrape_configs:
   - job_name: eltrea-bot
     metrics_path: /metrics
+    # /metrics закрыт Basic-авторизацией: раньше он отдавался всем и наружу
+    # уходили состав источников, объёмы потребности и средние ставки.
+    # Логин — WEB_USER, пароль — в файле, который монтируется из ./secrets
+    # и в репозиторий не попадает (см. .gitignore).
+    basic_auth:
+      username: admin
+      password_file: /etc/prometheus/web_password
     static_configs:
       - targets: ["app:8000"]

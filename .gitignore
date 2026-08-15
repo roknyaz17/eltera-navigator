@@ -5,6 +5,7 @@
 .qodo
 credentials.json
 service-account*.json
+# Пароли и ключи развёртывания (пароль скрейпа /metrics и т.п.)
 secrets/
 *.pem
 *.key
