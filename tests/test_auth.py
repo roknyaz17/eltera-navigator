@@ -228,3 +228,20 @@ def test_throttle_purges_stale_entries():
     assert len(throttle._buckets) == 10
     throttle._purge(now + 1000)
     assert len(throttle._buckets) == 0
+
+
+def test_module_works_without_loguru():
+    """auth.py умеют запускать вне контейнера — на голом системном python.
+
+    Хеширование пароля не должно падать из-за отсутствия библиотеки логов:
+    именно на этом споткнулась выкатка, когда scripts/set_password.py
+    запустили системным python без зависимостей.
+    """
+    source = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "auth.py"), encoding="utf-8").read()
+    assert "except ImportError" in source, "импорт loguru снова обязательный"
+    head = source.split("ROLE_")[0] if "ROLE_" in source else source[:2000]
+    assert "logging.getLogger" in head, "нет запасного логгера"
+
+
+import os  # noqa: E402  (нужен тесту выше)

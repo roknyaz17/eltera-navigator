@@ -26,7 +26,15 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from loguru import logger
+try:
+    from loguru import logger
+except ImportError:  # pragma: no cover
+    # Модуль умеют запускать вне контейнера — например, scripts/set_password.py
+    # на голом системном python. Хеширование пароля не должно падать из-за
+    # отсутствия библиотеки логирования.
+    import logging
+
+    logger = logging.getLogger("auth")
 
 # --------------------------------------------------------------- пароль
 
