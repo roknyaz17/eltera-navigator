@@ -36,7 +36,7 @@ Bootstrap 5.3.2, подключаемый с `cdn.jsdelivr.net`** (`registry.htm
 в `registry.html:256-277` и «Исходное сообщение» в `vacancies.html:256-281`.
 
 Локальной статики под всё это нет: в `static/` лежат только `assets/` (четыре PNG:
-`eltera-logo-crop.png`, `eltera-logo-transparent.png`, `eltera-logo.png`,
+`eltera-logo-horizontal.svg` (SVG из макета),
 `kp-reference.png`) и `media/navigator-bg.mp4`. Каталог смонтирован как
 `app.mount("/static", StaticFiles(directory="static"))` (`app.py:184`) и, в отличие от
 остальных роутов, **отдаётся без HTTP Basic**.
@@ -70,7 +70,7 @@ CDN, чтобы вёрстка не поехала), а в `static/fonts/` — �
 
 Дополнительно перенести из макета логотип `navigator/assets/logos/
 eltera_logo_horizontal_on_dark.svg` в `static/assets/eltera-logo-on-dark.svg` — на тёмном
-фоне сейчас растянут PNG `eltera-logo-transparent.png` (`templates/navigator.html:903`),
+фоне стоит SVG-логотип из макета `eltera-logo-horizontal.svg`; прежние PNG удалены,
 а векторного варианта в `static/assets/` нет.
 
 **Как должна работать логика.**

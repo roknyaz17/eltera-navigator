@@ -375,7 +375,7 @@ CSS-переменных нет — все значения записаны и�
 | Движок | `x-dc` + `support.js` + React с CDN | строковый рендер на ванильном JS, делегирование по `data-act`/`data-on`/`data-fid` (`:2115-2185`) |
 | Псевдоклассы | `style-hover`/`style-focus` | классы `.hLight/.hSoft/.hWhite/.hGold/.hCyan/.hRed/.fLine` (`:26-38`) |
 | Данные | зашитые константы | `/api/navigator` |
-| Ассеты | `assets/background-loop.mp4`, SVG-логотип на тёмном | `/static/media/navigator-bg.mp4`, `/static/assets/eltera-logo-transparent.png`; **SVG-логотип из макета в `static/assets/` не перенесён** |
+| Ассеты | `assets/background-loop.mp4`, SVG-логотип на тёмном | `/static/media/navigator-bg.mp4`, `/static/assets/eltera-logo-horizontal.svg` — перенесены оба |
 | Ставка рекрутера | `percent`/`fixed`, `baseAmount`, «База расчёта / Формула / Условие начисления / Этап выплаты / Гарантийный период» (`:2373-2379`) | приходит подобранной из `registry/rates.py`: `amount, tier, tiers[], scope, payout, note, validTo, expired`; строки «За что / Лестница по сменам / Когда выплачивается / Надбавки и оговорки / Действует до» — **процентных ставок, базы расчёта и гарантийного периода нет** |
 | Сортировка `rec` | percent выше fixed, затем по `value` (`:1978-1986`) | просто по сумме (`templates/navigator.html:611`) |
 | Фильтр ставки рекрутера | `процент / фикс / не задана` (`:2329`) | `задана / не задана / просрочена` (`:1007`) |
