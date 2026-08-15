@@ -99,13 +99,34 @@ uvicorn app:app --reload --port 8000
 ```
 
 Схема базы создаётся сама при первом обращении: `registry/db.py` сверяет
-`PRAGMA user_version` и последовательно накатывает недостающие элементы `MIGRATIONS`.
-Отдельной команды миграции нет — она выполнится в момент первого запроса после деплоя,
-до всякой резервной копии. Это заведено задачей `DB-01`.
+`PRAGMA user_version` и последовательно накатывает недостающие элементы `MIGRATIONS`
+(сейчас их семь). Перед накатом автоматически снимается копия базы — штатным
+backup API SQLite, в `BACKUP_DIR` или в `backups/` рядом с базой. Отдельной команды
+миграции по-прежнему нет, она заведена задачей `DB-01`.
 
-Доступ закрыт HTTP Basic (`WEB_USER` / `WEB_PASSWORD`). **Без авторизации открыты
-`/health`, `/metrics`, `/jobs` и `/static`** — через `/metrics` наружу уходит статистика
-по источникам и потребности. См. [docs/ROLES-AND-ACCESS.md](docs/ROLES-AND-ACCESS.md).
+### Вход
+
+Люди входят по почте и паролю на `/login`. Без `SECRET_KEY`, `AUTH_EMAIL`
+и `AUTH_PASSWORD_HASH` приложение **не запустится** — это намеренно.
+
+```bash
+python3 -c "import secrets; print('SECRET_KEY=' + secrets.token_hex(32))"
+```
+
+```bash
+python scripts/set_password.py
+```
+
+Первый администратор заводится из `AUTH_EMAIL` / `AUTH_PASSWORD_HASH`, пока таблица
+пользователей пуста. Дальше сотрудники добавляются во вкладке «Доступы» в админке:
+администратор выдаёт временный пароль на 48 часов, при первом входе человек задаёт
+свой. Роли — рекрутер и администратор; рекрутеру закрыты справочники, ручной ввод,
+запуск прогонов и правила ставок.
+
+Без авторизации открыт единственный роут — `/health`, его дёргает healthcheck
+контейнера. `/metrics`, `/jobs` и `/health/details` доступны машинным клиентам
+по Basic (`WEB_USER` / `WEB_PASSWORD`) — это нужно Prometheus.
+См. [docs/ROLES-AND-ACCESS.md](docs/ROLES-AND-ACCESS.md).
 
 ### Прогон без веб-сервера
 
@@ -191,8 +212,10 @@ python scripts/recruiter_rates.py
 ## Переменные окружения
 
 Полный список — [.env.example](.env.example). Минимум для локального запуска:
-`WEB_USER`, `WEB_PASSWORD`, `OPENAI_API_KEY`, плюс `credentials.json` для источников
-на Google Sheets.
+`SECRET_KEY`, `AUTH_EMAIL`, `AUTH_PASSWORD_HASH`, `OPENAI_API_KEY`, плюс
+`credentials.json` для источников на Google Sheets. Для Prometheus дополнительно
+`WEB_USER`, `WEB_PASSWORD` и файл `secrets/web_password`
+(см. [prometheus/README.md](prometheus/README.md)).
 
 Идентификаторы Google-таблиц зашиты константами в `pipeline.py`, путь к
 `credentials.json` — строкой в коде. Это не секреты, но и не конфигурация: добавление
