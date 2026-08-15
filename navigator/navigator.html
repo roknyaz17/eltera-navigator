@@ -1,0 +1,2538 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta charset="utf-8">
+  <title>Навигатор — подбор и нормализация</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    html, body { margin: 0; padding: 0; background: #0A0F1E; }
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; color: #E6F2FF; }
+    * { box-sizing: border-box; }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    a { color: #A4F4FD; text-decoration: none; }
+    a:hover { color: #E6F2FF; }
+    .liquid-glass { background: rgba(255,255,255,0.035); background-blend-mode: luminosity; backdrop-filter: blur(18px) saturate(1.1); -webkit-backdrop-filter: blur(18px) saturate(1.1); border: none; box-shadow: inset 0 1px 1px rgba(255,255,255,0.14), inset 0 -1px 0 rgba(255,255,255,.06); position: relative; overflow: hidden; }
+    .liquid-glass::before { content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1.4px; background: linear-gradient(180deg, rgba(255,255,255,.45) 0%, rgba(255,255,255,.15) 20%, rgba(255,255,255,0) 40%, rgba(255,255,255,0) 60%, rgba(255,255,255,.15) 80%, rgba(255,255,255,.45) 100%); -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; }
+    @keyframes appFade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    .appScroll { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.14) transparent; }
+    .appScroll::-webkit-scrollbar { width: 8px; height: 8px; }
+    .appScroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 999px; }
+    .appScroll::-webkit-scrollbar-track { background: transparent; }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+    /* Мобильные и низкие экраны: колонки перестают быть панелями во всю высоту, скроллит страница */
+    @media (max-width: 900px), (max-height: 560px) {
+      .navHeader { position: static !important; margin-top: 0 !important; }
+      .navAside, .navMain { position: static !important; height: auto !important; min-height: 0 !important; overflow: visible !important; }
+      .navAside > section, .navAside > div, .navMain > div { overflow: visible !important; }
+      .navAside .appScroll, .navMain .appScroll { max-height: none !important; overflow: visible !important; }
+      .navAside .cityList { max-height: 260px !important; overflow-y: auto !important; }
+    }
+    /* Телефон: палец, читаемость, без зума при фокусе в поле */
+    @media (max-width: 700px) {
+      .navRoot button, .navRoot select, .navRoot a[target="_blank"] { min-height: 40px; }
+      /* Тумблер — не кнопка-таргет: свои пропорции, иначе ручка отрывается от трека */
+      .navRoot .navSwitch { min-height: 0 !important; width: 58px !important; height: 32px !important; }
+      .navRoot .navSwitch > span { width: 28px !important; height: 28px !important; top: 2px !important; left: 2px !important; }
+      .navRoot .navSwitch[aria-pressed="true"] > span { transform: translateX(26px) !important; }
+      .navRoot input, .navRoot select, .navRoot textarea { font-size: 16px !important; min-height: 42px; }
+      .navRoot [role="dialog"] { padding: 12px !important; align-items: end !important; }
+      .navRoot [role="dialog"] > .liquid-glass { max-height: calc(100dvh - 24px) !important; padding: 18px !important; }
+      .navRoot [role="dialog"] > .liquid-glass > div:last-child { position: sticky; bottom: -18px; background: rgba(10,15,30,.92); padding: 10px 0 2px; }
+    }
+  </style>
+</helmet>
+
+<div class="navRoot" style="position:relative; min-height:100vh; background:#0A0F1E; overflow-x:hidden;">
+  <div style="position:fixed; inset:0; z-index:0; pointer-events:none; overflow:hidden;">
+    <video autoplay="{{ true }}" loop="{{ true }}" muted="{{ true }}" playsinline="{{ true }}" preload="auto" src="assets/background-loop.mp4" style="width:100%; height:100%; object-fit:cover;"></video>
+    <div style="position:absolute; inset:0; background:rgba(0,0,0,.62);"></div>
+  </div>
+
+  <div style="position:relative; z-index:1; width:min(1420px,100%); margin:0 auto; padding:clamp(16px,2.4vw,26px) clamp(14px,3vw,32px) 56px;">
+
+    <header class="navHeader" style="position:sticky; top:0; z-index:20; display:flex; flex-wrap:wrap; align-items:center; gap:16px 20px; padding:14px 0 18px; margin-top:-14px; border-bottom:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,0.035); background-blend-mode:luminosity; backdrop-filter:blur(18px) saturate(1.1); -webkit-backdrop-filter:blur(18px) saturate(1.1);">
+      <div style="display:flex; align-items:center; gap:14px; margin-right:auto;">
+        <img src="assets/logos/eltera_logo_horizontal_on_dark.svg" alt="Eltera" style="display:block; height:26px; width:auto;">
+        <span style="width:1px; height:26px; background:rgba(255,255,255,.14);"></span>
+        <div>
+          <div style="font-size:17px; font-weight:400; letter-spacing:-.02em; line-height:1.1; color:#fff;">Навигатор</div>
+          <div style="font-size:11.5px; color:rgba(255,255,255,.45); margin-top:2px;">{{ runLine }}</div>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:8px;">
+        <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="2">
+          <sc-if value="{{ t.on }}" hint-placeholder-val="{{ true }}">
+            <button type="button" onClick="{{ t.go }}" style="display:flex; align-items:center; gap:8px; height:38px; padding:0 16px; border:none; border-radius:9999px; background:#fff; color:#0A0F1E; font-size:13px; font-weight:600; cursor:pointer;">{{ t.label }}<span style="font-size:11.5px; opacity:.55; font-variant-numeric:tabular-nums;">{{ t.count }}</span></button>
+          </sc-if>
+          <sc-if value="{{ t.off }}">
+            <button type="button" onClick="{{ t.go }}" style="display:flex; align-items:center; gap:8px; height:38px; padding:0 16px; border:1px solid rgba(255,255,255,.12); border-radius:9999px; background:rgba(255,255,255,.04); color:rgba(255,255,255,.7); font-size:13px; cursor:pointer; transition:.2s;" style-hover="background:rgba(255,255,255,.1); color:#fff;">{{ t.label }}<span style="font-size:11.5px; opacity:.5; font-variant-numeric:tabular-nums;">{{ t.count }}</span></button>
+          </sc-if>
+        </sc-for>
+      </div>
+    </header>
+
+    <sc-if value="{{ isSearch }}" hint-placeholder-val="{{ true }}">
+      <div style="padding-top:18px; display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;">
+
+        <aside class="appScroll navAside" style="flex:1 1 320px; max-width:100%; display:flex; flex-direction:column; gap:12px; position:sticky; top:14px; height:calc(100vh - 124px); min-height:480px; overflow:hidden; padding-right:2px;">
+
+          <section class="liquid-glass" style="border-radius:18px; padding:18px; flex:1 1 auto; min-height:0; display:flex; flex-direction:column;">
+            <div style="display:flex; align-items:baseline; justify-content:space-between; gap:10px;">
+              <h2 style="margin:0; font-size:15px; font-weight:600; letter-spacing:-.02em; color:#fff;">Города</h2>
+              <span style="font-size:11.5px; color:rgba(255,255,255,.45);">{{ cityPickedText }}</span>
+            </div>
+
+            <div style="position:relative; margin-top:12px;">
+              <span style="position:absolute; left:13px; top:50%; transform:translateY(-50%); color:rgba(255,255,255,.45); display:flex;">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path></svg>
+              </span>
+              <input type="text" placeholder="Найти город" value="{{ citySearch }}" onChange="{{ onCitySearch }}" style="width:100%; height:34px; padding:0 14px 0 34px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12.5px; outline:none;" style-focus="border-color:rgba(255,255,255,.4);">
+            </div>
+
+            <sc-if value="{{ hasPicked }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;">
+                <sc-for list="{{ picked }}" as="p" hint-placeholder-count="1">
+                  <button type="button" onClick="{{ p.remove }}" style="display:flex; align-items:center; gap:6px; height:28px; padding:0 8px 0 11px; border:1px solid rgba(164,244,253,.35); border-radius:9999px; background:rgba(164,244,253,.12); color:#A4F4FD; font-size:12px; font-weight:400; cursor:pointer;">{{ p.name }}<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"></path></svg></button>
+                </sc-for>
+                <button type="button" onClick="{{ clearCities }}" style="height:28px; padding:0 10px; border:1px solid rgba(255,255,255,.12); border-radius:9999px; background:transparent; color:rgba(255,255,255,.45); font-size:12px; cursor:pointer;">сбросить</button>
+              </div>
+            </sc-if>
+
+            <div class="appScroll cityList" style="flex:1 1 auto; min-height:130px; overflow-y:auto; margin-top:10px; display:flex; flex-direction:column; gap:2px;">
+              <sc-for list="{{ cityList }}" as="c" hint-placeholder-count="6">
+                <button type="button" onClick="{{ c.toggle }}" style="display:flex; align-items:center; gap:10px; width:100%; padding:8px 9px; border:none; border-radius:10px; background:transparent; text-align:left; cursor:pointer; transition:.2s;" style-hover="background:rgba(255,255,255,.05);">
+                  <sc-if value="{{ c.on }}" hint-placeholder-val="{{ false }}">
+                    <span style="flex:none; width:17px; height:17px; border-radius:5px; border:1px solid rgba(164,244,253,.55); background:rgba(164,244,253,.12); display:grid; place-items:center; color:#A4F4FD;">
+                      <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+                    </span>
+                  </sc-if>
+                  <sc-if value="{{ c.off }}" hint-placeholder-val="{{ true }}">
+                    <span style="flex:none; width:17px; height:17px; border-radius:5px; border:1px solid rgba(148,180,230,.3);"></span>
+                  </sc-if>
+                  <span style="flex:1; min-width:0;">
+                    <span style="display:block; font-size:13.5px; color:#E6F2FF; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ c.name }}</span>
+                    <span style="display:block; font-size:11px; color:rgba(255,255,255,.4); margin-top:1px;">{{ c.region }}</span>
+                  </span>
+                  <sc-if value="{{ c.near }}" hint-placeholder-val="{{ false }}">
+                    <span style="flex:none; font-size:10.5px; color:rgba(255,255,255,.6); padding:2px 6px; border-radius:9999px; background:rgba(255,255,255,.06);">{{ c.nearText }}</span>
+                  </sc-if>
+                  <span style="flex:none; font-size:12px; color:rgba(255,255,255,.4); font-variant-numeric:tabular-nums;">{{ c.count }}</span>
+                </button>
+              </sc-for>
+            </div>
+
+            <div style="flex:none; display:flex; align-items:center; gap:12px; margin-top:14px; padding-top:14px; border-top:1px solid rgba(255,255,255,.1);">
+              <div style="flex:1; min-width:140px;">
+                <div style="font-size:13px; color:#E6F2FF;">Соседние города</div>
+                <div style="font-size:11.5px; color:rgba(255,255,255,.45); margin-top:2px;">радиус от первого выбранного</div>
+              </div>
+              <sc-if value="{{ radiusOn }}" hint-placeholder-val="{{ false }}">
+                <button type="button" class="navSwitch" onClick="{{ toggleRadius }}" aria-pressed="true" style="width:52px; height:28px; flex:none; border:none; border-radius:9999px; background:rgba(255,255,255,.28); position:relative; cursor:pointer; transition:.3s cubic-bezier(.4,0,.2,1);">
+                  <span style="position:absolute; top:2px; left:2px; width:24px; height:24px; border-radius:9999px; background:#fff; transform:translateX(24px); transition:.3s cubic-bezier(.4,0,.2,1);"></span>
+                </button>
+              </sc-if>
+              <sc-if value="{{ radiusOff }}" hint-placeholder-val="{{ true }}">
+                <button type="button" class="navSwitch" onClick="{{ toggleRadius }}" aria-pressed="false" style="width:52px; height:28px; flex:none; border:none; border-radius:9999px; background:#fff; position:relative; cursor:pointer; transition:.3s cubic-bezier(.4,0,.2,1);">
+                  <span style="position:absolute; top:2px; left:2px; width:24px; height:24px; border-radius:9999px; background:#0A0F1E; transition:.3s cubic-bezier(.4,0,.2,1);"></span>
+                </button>
+              </sc-if>
+            </div>
+
+            <sc-if value="{{ radiusOn }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top:12px;">
+                <div style="display:flex; gap:6px;">
+                  <sc-for list="{{ radiusOpts }}" as="r" hint-placeholder-count="3">
+                    <sc-if value="{{ r.on }}" hint-placeholder-val="{{ false }}">
+                      <button type="button" onClick="{{ r.pick }}" style="flex:1; height:34px; border:none; border-radius:9999px; background:#fff; color:#0A0F1E; font-size:12.5px; font-weight:600; cursor:pointer;">{{ r.label }}</button>
+                    </sc-if>
+                    <sc-if value="{{ r.off }}" hint-placeholder-val="{{ true }}">
+                      <button type="button" onClick="{{ r.pick }}" style="flex:1; height:34px; border:1px solid rgba(255,255,255,.12); border-radius:9999px; background:rgba(255,255,255,.04); color:rgba(255,255,255,.7); font-size:12.5px; cursor:pointer; transition:.2s;" style-hover="background:rgba(255,255,255,.1);">{{ r.label }}</button>
+                    </sc-if>
+                  </sc-for>
+                </div>
+                <p style="margin:10px 0 0; font-size:11.5px; line-height:1.55; color:rgba(255,255,255,.45);">{{ nearSummary }}</p>
+              </div>
+            </sc-if>
+          </section>
+
+          <section class="liquid-glass" style="border-radius:18px; padding:18px; flex:0 1 auto; min-height:0; display:flex; flex-direction:column; overflow:hidden;">
+            <div style="flex:none; display:flex; align-items:baseline; justify-content:space-between; gap:10px;">
+              <h2 style="margin:0; font-size:15px; font-weight:600; letter-spacing:-.02em; color:#fff;">Условия и требования</h2>
+              <button type="button" onClick="{{ resetFilters }}" style="border:none; background:transparent; padding:0; color:rgba(255,255,255,.45); font-size:11.5px; cursor:pointer;">сбросить</button>
+            </div>
+
+            <div class="appScroll" style="flex:1 1 auto; min-height:0; overflow-y:auto; padding-right:4px;">
+            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:10px; margin-top:14px;">
+              <sc-for list="{{ numFilters }}" as="n" hint-placeholder-count="3">
+                <label style="display:block;">
+                  <span style="display:block; font-size:11.5px; color:rgba(255,255,255,.5); margin-bottom:5px;">{{ n.label }}</span>
+                  <input type="number" placeholder="{{ n.ph }}" value="{{ n.value }}" onChange="{{ n.set }}" style="width:100%; height:28px; padding:0 11px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12px; outline:none;" style-focus="border-color:rgba(255,255,255,.4);">
+                </label>
+              </sc-for>
+
+              <sc-for list="{{ selFilters }}" as="f" hint-placeholder-count="6">
+                <label style="display:block;">
+                  <span style="display:block; font-size:11.5px; color:rgba(255,255,255,.5); margin-bottom:5px;">{{ f.label }}</span>
+                  <select value="{{ f.value }}" onChange="{{ f.set }}" style="width:100%; height:28px; padding:0 9px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12px; outline:none; cursor:pointer;" style-focus="border-color:rgba(255,255,255,.4);">
+                    <sc-for list="{{ f.opts }}" as="o" hint-placeholder-count="3">
+                      <option value="{{ o.v }}">{{ o.t }}</option>
+                    </sc-for>
+                  </select>
+                </label>
+              </sc-for>
+            </div>
+
+            <sc-if value="{{ moreOpen }}" hint-placeholder-val="{{ false }}">
+              <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:10px; margin-top:10px;">
+                <sc-for list="{{ moreFilters }}" as="f" hint-placeholder-count="3">
+                  <label style="display:block;">
+                    <span style="display:block; font-size:11.5px; color:rgba(255,255,255,.5); margin-bottom:5px;">{{ f.label }}</span>
+                    <select value="{{ f.value }}" onChange="{{ f.set }}" style="width:100%; height:28px; padding:0 9px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12px; outline:none; cursor:pointer;" style-focus="border-color:rgba(255,255,255,.4);">
+                      <sc-for list="{{ f.opts }}" as="o" hint-placeholder-count="3">
+                        <option value="{{ o.v }}">{{ o.t }}</option>
+                      </sc-for>
+                    </select>
+                  </label>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <button type="button" onClick="{{ toggleMore }}" style="display:flex; align-items:center; justify-content:center; gap:7px; width:100%; height:28px; margin-top:12px; border:1px solid rgba(255,255,255,.12); border-radius:9999px; background:rgba(255,255,255,.03); color:rgba(255,255,255,.7); font-size:12.5px; cursor:pointer; transition:.2s;" style-hover="background:rgba(255,255,255,.08); color:#fff;">
+              {{ moreLabel }}
+              <sc-if value="{{ moreCountOn }}" hint-placeholder-val="{{ false }}">
+                <span style="font-size:11px; color:#A4F4FD;">{{ moreCount }}</span>
+              </sc-if>
+            </button>
+            </div>
+          </section>
+        </aside>
+
+        <section class="navMain" style="flex:99 1 520px; min-width:0; display:flex; flex-direction:column; gap:12px; position:sticky; top:14px; height:calc(100vh - 124px); min-height:480px; overflow:hidden;">
+
+          <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <sc-for list="{{ scopes }}" as="s" hint-placeholder-count="3">
+                <sc-if value="{{ s.on }}" hint-placeholder-val="{{ true }}">
+                  <button type="button" onClick="{{ s.go }}" style="display:flex; align-items:center; gap:8px; height:34px; padding:0 14px; border:none; border-radius:9999px; background:#fff; color:#0A0F1E; font-size:12.5px; font-weight:600; cursor:pointer;">{{ s.label }}<span style="font-size:11px; opacity:.55; font-variant-numeric:tabular-nums;">{{ s.count }}</span></button>
+                </sc-if>
+                <sc-if value="{{ s.off }}">
+                  <button type="button" onClick="{{ s.go }}" style="display:flex; align-items:center; gap:8px; height:34px; padding:0 14px; border:1px solid rgba(255,255,255,.12); border-radius:9999px; background:rgba(255,255,255,.04); color:rgba(255,255,255,.7); font-size:12.5px; cursor:pointer; transition:.2s;" style-hover="background:rgba(255,255,255,.1);">{{ s.label }}<span style="font-size:11px; opacity:.5; font-variant-numeric:tabular-nums;">{{ s.count }}</span></button>
+                </sc-if>
+              </sc-for>
+            </div>
+
+            <div style="position:relative; flex:1 1 220px; min-width:180px;">
+              <span style="position:absolute; left:13px; top:50%; transform:translateY(-50%); color:rgba(255,255,255,.45); display:flex;">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.2-3.2"></path></svg>
+              </span>
+              <input type="text" placeholder="Профессия, требование, контрагент" value="{{ q }}" onChange="{{ onQ }}" style="width:100%; height:38px; padding:0 14px 0 36px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:13px; outline:none;" style-focus="border-color:rgba(255,255,255,.4);">
+            </div>
+
+            <select value="{{ sort }}" onChange="{{ onSort }}" style="height:38px; padding:0 12px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12.5px; outline:none; cursor:pointer;">
+              <option value="rate">Ставка кандидата ↓</option>
+              <option value="rec">Ставка рекрутера ↓</option>
+              <option value="need">Потребность ↓</option>
+              <option value="fresh">Свежие ↑</option>
+              <option value="dist">Ближе к городу</option>
+            </select>
+          </div>
+
+          <sc-if value="{{ scopeNote }}" hint-placeholder-val="{{ false }}">
+            <div class="liquid-glass" style="border-radius:14px; padding:12px 16px; display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px;">
+              <span style="font-size:11px; color:rgba(255,255,255,.45);">Активная заявка</span>
+              <span style="font-size:13px; font-weight:600; color:#fff;">{{ reqTitle }}</span>
+              <span style="font-size:12px; color:rgba(255,255,255,.5);">{{ reqMeta }}</span>
+            </div>
+          </sc-if>
+
+          <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:0 4px;">
+            <span style="font-size:13px; color:rgba(255,255,255,.6);">{{ foundText }}</span>
+            <span style="font-size:12px; color:rgba(255,255,255,.4);">{{ gapText }}</span>
+          </div>
+
+          <div class="liquid-glass" style="flex:1 1 auto; min-height:0; border-radius:18px; padding:12px; display:flex; flex-direction:column; overflow:hidden;">
+          <div class="appScroll" ref="{{ listRef }}" style="flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column; padding-right:6px;">
+            <sc-for list="{{ list }}" as="v" hint-placeholder-count="4">
+              <article style="flex:none; padding:18px 8px; border-bottom:1px solid rgba(255,255,255,.08); animation:appFade .35s cubic-bezier(.22,1,.36,1) both;">
+
+                <div style="display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;">
+                  <div style="flex:1 1 300px; min-width:0;">
+                    <div style="display:flex; flex-wrap:wrap; align-items:baseline; gap:9px;">
+                      <h3 style="margin:0; font-size:17px; font-weight:600; letter-spacing:-.02em; line-height:1.15; color:#fff;">{{ v.prof }}</h3>
+                      <span style="font-size:13px; color:rgba(255,255,255,.6);">{{ v.place }}</span>
+                    </div>
+                    <p style="margin:6px 0 0; font-size:13px; font-weight:400; line-height:1.5; color:rgba(255,255,255,.6);">{{ v.objLine }}</p>
+                  </div>
+
+                  <div class="liquid-glass" style="flex:none; border-radius:12px; padding:9px 13px; min-width:168px;">
+                    <div style="font-size:11px; color:rgba(255,255,255,.45);">Ставка рекрутера</div>
+                    <sc-if value="{{ v.recKnown }}" hint-placeholder-val="{{ true }}">
+                      <div style="font-size:17px; font-weight:600; letter-spacing:-.02em; color:#fff; margin-top:4px; font-variant-numeric:tabular-nums;">{{ v.recValue }}</div>
+                      <div style="font-size:11px; color:rgba(255,255,255,.45); margin-top:3px; line-height:1.35;">{{ v.recBase }}</div>
+                    </sc-if>
+                    <sc-if value="{{ v.recGap }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+                        <span style="width:6px; height:6px; border-radius:9999px; background:#D9A441; box-shadow:0 0 8px #D9A441;"></span>
+                        <span style="font-size:12.5px; color:#D9A441;">не задана</span>
+                      </div>
+                    </sc-if>
+                  </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:8px; margin-top:14px;">
+                  <sc-for list="{{ v.facts }}" as="f" hint-placeholder-count="5">
+                    <div class="liquid-glass" style="border-radius:12px; padding:9px 11px;">
+                      <div style="font-size:11px; color:rgba(255,255,255,.45);">{{ f.k }}</div>
+                      <sc-if value="{{ f.ok }}" hint-placeholder-val="{{ true }}">
+                        <div style="font-size:13.5px; font-weight:600; color:#E6F2FF; margin-top:3px; line-height:1.3;">{{ f.v }}</div>
+                      </sc-if>
+                      <sc-if value="{{ f.na }}" hint-placeholder-val="{{ false }}">
+                        <div style="display:flex; align-items:center; gap:6px; margin-top:5px;">
+                          <span style="flex:none; width:6px; height:6px; border-radius:9999px; background:#64748B;"></span>
+                          <span style="font-size:12.5px; color:#64748B;">не указано</span>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+
+                <div style="display:flex; align-items:center; gap:9px; margin-top:14px;">
+                  <span style="font-size:11px; color:rgba(255,255,255,.45);">Условия</span>
+                  <span style="flex:1; height:1px; background:rgba(255,255,255,.1);"></span>
+                </div>
+
+                <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:8px; margin-top:8px;">
+                  <sc-for list="{{ v.terms }}" as="t" hint-placeholder-count="3">
+                    <div class="liquid-glass" style="border-radius:12px; padding:10px 12px;">
+                      <div style="display:flex; align-items:center; gap:7px;">
+                        <span style="display:flex; color:rgba(255,255,255,.55);">
+                          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ t.icon }}"></path></svg>
+                        </span>
+                        <span style="font-size:11px; color:rgba(255,255,255,.45);">{{ t.k }}</span>
+                      </div>
+                      <sc-if value="{{ t.ok }}" hint-placeholder-val="{{ true }}">
+                        <div style="font-size:13px; font-weight:400; line-height:1.45; color:#E6F2FF; margin-top:5px;">{{ t.v }}</div>
+                      </sc-if>
+                      <sc-if value="{{ t.no }}" hint-placeholder-val="{{ false }}">
+                        <div style="font-size:13px; font-weight:400; line-height:1.45; color:rgba(255,255,255,.6); margin-top:5px;">{{ t.v }}</div>
+                      </sc-if>
+                      <sc-if value="{{ t.def }}" hint-placeholder-val="{{ false }}">
+                        <div style="font-size:13px; font-weight:400; line-height:1.45; color:#E6F2FF; margin-top:5px;">{{ t.v }}</div>
+                        <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
+                          <span style="flex:none; width:6px; height:6px; border-radius:9999px; background:#D9A441; box-shadow:0 0 8px #D9A441;"></span>
+                          <span style="font-size:11.5px; color:#D9A441;">значение по умолчанию — подтвердить</span>
+                        </div>
+                      </sc-if>
+                      <sc-if value="{{ t.conf }}" hint-placeholder-val="{{ false }}">
+                        <div style="display:flex; align-items:center; gap:6px; margin-top:5px;">
+                          <span style="flex:none; width:6px; height:6px; border-radius:9999px; background:#FF7B6B; box-shadow:0 0 8px #FF7B6B;"></span>
+                          <span style="font-size:12.5px; color:#FF7B6B;">конфликт источников</span>
+                        </div>
+                        <div style="font-size:11.5px; color:rgba(255,255,255,.5); margin-top:3px; line-height:1.4;">{{ t.v }}</div>
+                      </sc-if>
+                      <sc-if value="{{ t.na }}" hint-placeholder-val="{{ false }}">
+                        <div style="display:flex; align-items:center; gap:6px; margin-top:5px;">
+                          <span style="flex:none; width:6px; height:6px; border-radius:9999px; background:#64748B;"></span>
+                          <span style="font-size:12.5px; color:#64748B;">не указано</span>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+
+                <div style="display:flex; align-items:center; gap:9px; margin-top:14px;">
+                  <span style="font-size:11px; color:rgba(255,255,255,.45);">Деньги — озвучить до выезда</span>
+                  <span style="flex:1; height:1px; background:rgba(255,255,255,.1);"></span>
+                </div>
+
+                <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:8px; margin-top:8px;">
+                  <div class="liquid-glass" style="border-radius:12px; padding:10px 12px;">
+                    <div style="font-size:11px; color:rgba(255,255,255,.45);">Выплаты</div>
+                    <sc-if value="{{ v.payOk }}" hint-placeholder-val="{{ true }}">
+                      <div style="font-size:13px; font-weight:400; line-height:1.45; color:#A4F4FD; margin-top:5px;">{{ v.payText }}</div>
+                    </sc-if>
+                    <sc-if value="{{ v.payNa }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex; align-items:center; gap:6px; margin-top:5px;">
+                        <span style="flex:none; width:6px; height:6px; border-radius:9999px; background:#64748B;"></span>
+                        <span style="font-size:12.5px; color:#64748B;">не указано</span>
+                      </div>
+                    </sc-if>
+                  </div>
+
+                  <div class="liquid-glass" style="border-radius:12px; padding:10px 12px;">
+                    <div style="font-size:11px; color:rgba(255,255,255,.45);">Удержания</div>
+                    <sc-if value="{{ v.dedHas }}" hint-placeholder-val="{{ true }}">
+                      <div style="display:flex; flex-direction:column; gap:3px; margin-top:5px;">
+                        <sc-for list="{{ v.ded }}" as="d" hint-placeholder-count="2">
+                          <div style="display:flex; align-items:baseline; gap:6px;">
+                            <span style="font-size:13px; color:#FF7B6B;">{{ d.line }}</span>
+                            <sc-if value="{{ d.refund }}" hint-placeholder-val="{{ false }}">
+                              <span style="font-size:11px; color:#6EE7C1;">{{ d.refundText }}</span>
+                            </sc-if>
+                          </div>
+                        </sc-for>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{ v.dedNone }}" hint-placeholder-val="{{ false }}">
+                      <div style="font-size:13px; color:#6EE7C1; margin-top:5px;">Удержаний нет</div>
+                    </sc-if>
+                    <sc-if value="{{ v.dedNa }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex; align-items:center; gap:6px; margin-top:5px;">
+                        <span style="flex:none; width:6px; height:6px; border-radius:9999px; background:#64748B;"></span>
+                        <span style="font-size:12.5px; color:#64748B;">не указано</span>
+                      </div>
+                    </sc-if>
+                  </div>
+
+                  <div class="liquid-glass" style="border-radius:12px; padding:10px 12px;">
+                    <div style="font-size:11px; color:rgba(255,255,255,.45);">Проезд</div>
+                    <sc-if value="{{ v.travelOk }}" hint-placeholder-val="{{ true }}">
+                      <div style="font-size:13px; font-weight:400; line-height:1.45; color:#6EE7C1; margin-top:5px;">{{ v.travelText }}</div>
+                    </sc-if>
+                    <sc-if value="{{ v.travelNo }}" hint-placeholder-val="{{ false }}">
+                      <div style="font-size:13px; font-weight:400; line-height:1.45; color:rgba(255,255,255,.6); margin-top:5px;">Не компенсируется</div>
+                    </sc-if>
+                    <sc-if value="{{ v.travelNa }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex; align-items:center; gap:6px; margin-top:5px;">
+                        <span style="flex:none; width:6px; height:6px; border-radius:9999px; background:#64748B;"></span>
+                        <span style="font-size:12.5px; color:#64748B;">не указано</span>
+                      </div>
+                    </sc-if>
+                  </div>
+                </div>
+
+                <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:12px;">
+                  <sc-for list="{{ v.chips }}" as="c" hint-placeholder-count="4">
+                    <span style="height:26px; display:inline-flex; align-items:center; padding:0 10px; border:1px solid rgba(255,255,255,.1); border-radius:9999px; background:rgba(255,255,255,.03); font-size:12px; color:rgba(255,255,255,.7);">{{ c.t }}</span>
+                  </sc-for>
+                </div>
+
+                <sc-if value="{{ v.hasMedia }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:12px;">
+                    <sc-for list="{{ v.media }}" as="m" hint-placeholder-count="2">
+                      <sc-if value="{{ m.alive }}" hint-placeholder-val="{{ true }}">
+                        <a href="{{ m.url }}" target="_blank" rel="noopener" style="display:inline-flex; align-items:center; gap:7px; height:32px; padding:0 12px; border:1px solid rgba(255,255,255,.12); border-radius:9999px; background:rgba(255,255,255,.04); color:rgba(255,255,255,.75); font-size:12px; transition:.2s;" style-hover="background:rgba(255,255,255,.1); color:#fff;">
+                          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ m.icon }}"></path></svg>
+                          {{ m.label }}
+                        </a>
+                      </sc-if>
+                      <sc-if value="{{ m.dead }}" hint-placeholder-val="{{ false }}">
+                        <button type="button" onClick="{{ m.warn }}" style="display:inline-flex; align-items:center; gap:7px; height:32px; padding:0 12px; border:1px solid rgba(217,164,65,.35); border-radius:9999px; background:rgba(217,164,65,.12); color:#D9A441; font-size:12px; cursor:pointer;">
+                          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v5M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>
+                          {{ m.label }} — недоступна
+                        </button>
+                      </sc-if>
+                    </sc-for>
+                  </div>
+                </sc-if>
+
+                <div style="display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:16px; padding-top:14px; border-top:1px solid rgba(255,255,255,.1);">
+                  <button type="button" onClick="{{ v.openText }}" style="display:flex; align-items:center; gap:8px; height:36px; padding:0 16px; border:none; border-radius:9999px; background:#fff; color:#000; font-size:12.5px; font-weight:600; cursor:pointer; transition:.2s;" style-hover="background:rgba(255,255,255,.9);" style-active="transform:scale(.98);">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v4M9 21H5a2 2 0 0 1-2-2v-4"></path><rect x="7" y="7" width="10" height="10" rx="2"></rect></svg>
+                    Текст кандидату
+                  </button>
+                  <button type="button" onClick="{{ v.openDetail }}" style="display:flex; align-items:center; gap:8px; height:36px; padding:0 14px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12.5px; cursor:pointer; transition:.2s;" style-hover="background:rgba(255,255,255,.1);">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 8h.01"></path></svg>
+                    Подробнее
+                  </button>
+
+                  <sc-if value="{{ v.hasGaps }}" hint-placeholder-val="{{ true }}">
+                    <button type="button" onClick="{{ v.openGaps }}" style="display:flex; align-items:center; gap:7px; height:32px; padding:0 12px; border:1px solid rgba(217,164,65,.35); border-radius:9999px; background:rgba(217,164,65,.12); color:#D9A441; font-size:12px; cursor:pointer; transition:.2s;" style-hover="background:rgba(217,164,65,.18);">
+                      <span style="width:6px; height:6px; border-radius:9999px; background:#D9A441; box-shadow:0 0 8px #D9A441;"></span>
+                      {{ v.gapLabel }}
+                    </button>
+                  </sc-if>
+
+                  <span style="margin-left:auto; font-size:11.5px; color:rgba(255,255,255,.4); font-variant-numeric:tabular-nums;">{{ v.id }}</span>
+                </div>
+
+                <sc-if value="{{ v.internal }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; margin-top:12px; padding:10px 12px; border-radius:12px; background:rgba(255,255,255,.04); border:1px dashed rgba(255,255,255,.14);">
+                    <span style="font-size:10px; letter-spacing:.06em; color:rgba(255,255,255,.4);">только внутри</span>
+                    <span style="font-size:12px; color:rgba(255,255,255,.7);">{{ v.cp }}</span>
+                    <span style="font-size:12px; color:rgba(255,255,255,.5);">{{ v.obj }}</span>
+                    <span style="margin-left:auto; font-size:11.5px; color:rgba(255,255,255,.4);">{{ v.srcLine }}</span>
+                  </div>
+                </sc-if>
+              </article>
+            </sc-for>
+          </div>
+
+          <sc-if value="{{ isEmpty }}" hint-placeholder-val="{{ false }}">
+            <div style="padding:40px 24px; text-align:center;">
+              <div style="font-size:15px; font-weight:600; color:#fff;">Под эти параметры позиций нет</div>
+              <p style="margin:8px auto 0; max-width:380px; font-size:13px; line-height:1.6; color:rgba(255,255,255,.5);">Расширьте радиус, снимите фильтр по гражданству или уберите ограничение по ставке.</p>
+            </div>
+          </sc-if>
+          </div>
+        </section>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isNorm }}" hint-placeholder-val="{{ false }}">
+      <div style="padding-top:18px; display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;">
+
+        <aside class="navAside" style="flex:1 1 320px; max-width:100%; display:flex; flex-direction:column; gap:12px; position:sticky; top:14px; height:calc(100vh - 124px); min-height:480px; overflow:hidden;">
+
+          <section class="liquid-glass" style="flex:none; border-radius:18px; padding:18px;">
+            <h2 style="margin:0; font-size:15px; font-weight:600; letter-spacing:-.02em; color:#fff;">Автопроверка</h2>
+            <p style="margin:6px 0 0; font-size:12.5px; line-height:1.55; color:rgba(255,255,255,.5);">Заявки проверяются и публикуются без человека. Чего не хватает — система сама запрашивает у заказчика.</p>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:14px;">
+              <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="4">
+                <div style="padding:11px 12px; border-radius:12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1);">
+                  <div style="display:flex; align-items:center; gap:6px;">
+                    <span style="width:6px; height:6px; border-radius:9999px; background:{{ k.dot }};"></span>
+                    <span style="font-size:19px; font-weight:600; letter-spacing:-.02em; color:#fff; font-variant-numeric:tabular-nums;">{{ k.n }}</span>
+                  </div>
+                  <div style="font-size:11.5px; color:rgba(255,255,255,.5); margin-top:3px; line-height:1.35;">{{ k.label }}</div>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:14px; padding-top:14px; border-top:1px solid rgba(255,255,255,.1);">
+              <div style="flex:1; min-width:0;">
+                <div style="font-size:12.5px; color:#E6F2FF;">Запросы уходят ежедневно в {{ sendTime }}</div>
+                <div style="font-size:11.5px; color:rgba(255,255,255,.45); margin-top:2px;">{{ nextRunText }}</div>
+              </div>
+              <button type="button" onClick="{{ sendNow }}" style="height:28px; padding:0 14px; border:none; border-radius:9999px; background:#fff; color:#000; font-size:12px; font-weight:600; cursor:pointer;">Отправить сейчас</button>
+            </div>
+          </section>
+
+          <section class="liquid-glass" style="flex:1 1 auto; min-height:0; border-radius:18px; padding:18px; display:flex; flex-direction:column; overflow:hidden;">
+            <div style="flex:none; display:flex; align-items:baseline; justify-content:space-between; gap:10px;">
+              <h2 style="margin:0; font-size:15px; font-weight:600; letter-spacing:-.02em; color:#fff;">Шаблон сообщения</h2>
+              <span style="font-size:11px; color:rgba(255,255,255,.4);">подставляется автоматически</span>
+            </div>
+            <div class="appScroll" style="flex:1 1 auto; min-height:0; overflow-y:auto; margin-top:12px; padding-right:4px;">
+              <pre style="margin:0; padding:14px; border-radius:12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1); font-family:'Inter',system-ui,sans-serif; font-size:12.5px; font-weight:400; line-height:1.65; color:rgba(255,255,255,.75); white-space:pre-wrap; word-break:break-word;">{{ tplText }}</pre>
+              <p style="margin:10px 0 0; font-size:11.5px; line-height:1.55; color:rgba(255,255,255,.4);">Повтор через сутки, максимум {{ maxTries }} раза. После этого заявка попадает в исключения.</p>
+            </div>
+          </section>
+        </aside>
+
+        <section class="navMain" style="flex:99 1 420px; min-width:0; display:flex; flex-direction:column; gap:12px; position:sticky; top:14px; height:calc(100vh - 124px); min-height:480px; overflow:hidden;">
+
+          <div style="flex:none; display:flex; flex-wrap:wrap; gap:6px;">
+            <sc-for list="{{ adminTabs }}" as="t" hint-placeholder-count="3">
+              <sc-if value="{{ t.on }}" hint-placeholder-val="{{ true }}">
+                <button type="button" onClick="{{ t.go }}" style="display:flex; align-items:center; gap:8px; height:34px; padding:0 14px; border:none; border-radius:9999px; background:#fff; color:#0A0F1E; font-size:12.5px; font-weight:600; cursor:pointer;">{{ t.label }}<span style="font-size:11px; opacity:.55; font-variant-numeric:tabular-nums;">{{ t.count }}</span></button>
+              </sc-if>
+
+              <sc-if value="{{ t.off }}">
+                <button type="button" onClick="{{ t.go }}" style="display:flex; align-items:center; gap:8px; height:34px; padding:0 14px; border:1px solid rgba(255,255,255,.12); border-radius:9999px; background:rgba(255,255,255,.04); color:rgba(255,255,255,.7); font-size:12.5px; cursor:pointer; transition:.2s;" style-hover="background:rgba(255,255,255,.1);">{{ t.label }}<span style="font-size:11px; opacity:.5; font-variant-numeric:tabular-nums;">{{ t.count }}</span></button>
+              </sc-if>
+            </sc-for>
+          </div>
+
+          <div class="liquid-glass" style="flex:1 1 auto; min-height:0; border-radius:18px; padding:12px; display:flex; flex-direction:column; overflow:hidden;">
+            <div class="appScroll" style="flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:8px; padding:6px 6px 6px 6px;">
+
+              <sc-if value="{{ isExc }}" hint-placeholder-val="{{ true }}">
+                <sc-for list="{{ exceptions }}" as="e" hint-placeholder-count="2">
+                  <div style="padding:14px; border-radius:14px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1);">
+                    <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px;">
+                      <span style="display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 10px; border-radius:9999px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12);">
+                        <span style="width:6px; height:6px; border-radius:9999px; background:{{ e.dot }};"></span>
+                        <span style="font-size:11px; color:#E6F2FF;">{{ e.status }}</span>
+                      </span>
+                      <span style="font-size:13.5px; font-weight:600; color:#fff;">{{ e.title }}</span>
+                      <span style="font-size:12px; color:rgba(255,255,255,.5);">{{ e.place }}</span>
+                      <span style="margin-left:auto; font-size:11px; color:rgba(255,255,255,.35); font-variant-numeric:tabular-nums;">{{ e.id }}</span>
+                    </div>
+
+                    <p style="margin:9px 0 0; font-size:12.5px; line-height:1.55; color:rgba(255,255,255,.7);">{{ e.what }}</p>
+
+                    <sc-if value="{{ e.hasValues }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:9px;">
+                        <sc-for list="{{ e.values }}" as="p" hint-placeholder-count="2">
+                          <button type="button" onClick="{{ p.take }}" style="display:flex; flex-direction:column; align-items:flex-start; gap:2px; padding:7px 12px; border:1px solid rgba(255,255,255,.14); border-radius:12px; background:rgba(255,255,255,.04); cursor:pointer; text-align:left; transition:.2s;" style-hover="background:rgba(164,244,253,.12); border-color:rgba(164,244,253,.45);">
+                            <span style="font-size:13px; font-weight:600; color:#fff;">{{ p.v }}</span>
+                            <span style="font-size:11px; color:rgba(255,255,255,.45);">{{ p.src }}</span>
+                          </button>
+                        </sc-for>
+                      </div>
+                    </sc-if>
+
+                    <div style="font-size:11.5px; color:rgba(255,255,255,.45); margin-top:9px;">{{ e.history }}</div>
+
+                    <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:10px;">
+                      <button type="button" onClick="{{ e.chat }}" style="height:28px; padding:0 14px; border:none; border-radius:9999px; background:#fff; color:#000; font-size:12px; font-weight:600; cursor:pointer;">{{ e.mainAction }}</button>
+                      <sc-if value="{{ e.isDup }}" hint-placeholder-val="{{ false }}">
+                        <button type="button" onClick="{{ e.merge }}" style="height:28px; padding:0 12px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12px; cursor:pointer;">Объединить</button>
+                        <button type="button" onClick="{{ e.keep }}" style="height:28px; padding:0 12px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:transparent; color:rgba(255,255,255,.6); font-size:12px; cursor:pointer;">Разные позиции</button>
+                      </sc-if>
+                      <button type="button" onClick="{{ e.snooze }}" style="height:28px; padding:0 12px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:transparent; color:rgba(255,255,255,.6); font-size:12px; cursor:pointer;">Отложить на сутки</button>
+                    </div>
+                  </div>
+                </sc-for>
+                <sc-if value="{{ noExceptions }}" hint-placeholder-val="{{ false }}">
+                  <div style="padding:36px 12px; text-align:center;">
+                    <div style="font-size:14px; font-weight:600; color:#6EE7C1;">Исключений нет</div>
+                    <p style="margin:6px auto 0; max-width:320px; font-size:12.5px; line-height:1.6; color:rgba(255,255,255,.5);">Всё, чего не хватало, система запросила сама и ждёт ответа заказчиков.</p>
+                  </div>
+                </sc-if>
+              </sc-if>
+
+              <sc-if value="{{ isReq }}" hint-placeholder-val="{{ false }}">
+                <sc-for list="{{ outreach }}" as="o" hint-placeholder-count="3">
+                  <div style="padding:14px; border-radius:14px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1);">
+                    <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px;">
+                      <span style="display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 10px; border-radius:9999px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12);">
+                        <span style="width:6px; height:6px; border-radius:9999px; background:{{ o.dot }};"></span>
+                        <span style="font-size:11px; color:#E6F2FF;">{{ o.status }}</span>
+                      </span>
+                      <span style="font-size:13.5px; font-weight:600; color:#fff;">{{ o.cp }}</span>
+                      <span style="font-size:12px; color:rgba(255,255,255,.5);">{{ o.chat }}</span>
+                      <span style="margin-left:auto; font-size:11px; color:rgba(255,255,255,.35); font-variant-numeric:tabular-nums;">{{ o.id }}</span>
+                    </div>
+
+                    <div style="font-size:12.5px; color:rgba(255,255,255,.7); margin-top:8px;">{{ o.title }}</div>
+                    <div style="font-size:11.5px; color:rgba(255,255,255,.4); margin-top:3px;">{{ o.greetNote }} · внутренние названия и номера в сообщение не попадают</div>
+
+                    <pre style="margin:9px 0 0; padding:12px; border-radius:12px; background:rgba(0,0,0,.28); border:1px solid rgba(255,255,255,.08); font-family:'Inter',system-ui,sans-serif; font-size:12px; font-weight:400; line-height:1.6; color:rgba(255,255,255,.7); white-space:pre-wrap; word-break:break-word;">{{ o.text }}</pre>
+
+                    <sc-if value="{{ o.hasAsked }}" hint-placeholder-val="{{ false }}">
+                      <div style="font-size:11.5px; color:rgba(255,255,255,.45); margin-top:8px;">{{ o.askedNote }}</div>
+                    </sc-if>
+
+                    <sc-if value="{{ o.hasFollowUp }}" hint-placeholder-val="{{ false }}">
+                      <div style="font-size:11.5px; color:#A4F4FD; margin-top:9px;">Догоняющее сообщение в тот же чат — без приветствия, только новые вопросы:</div>
+                      <pre style="margin:6px 0 0; padding:12px; border-radius:12px; background:rgba(164,244,253,.08); border:1px solid rgba(164,244,253,.25); font-family:'Inter',system-ui,sans-serif; font-size:12px; font-weight:400; line-height:1.6; color:rgba(255,255,255,.75); white-space:pre-wrap; word-break:break-word;">{{ o.followText }}</pre>
+                    </sc-if>
+
+                    <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; margin-top:10px;">
+                      <span style="font-size:11.5px; color:rgba(255,255,255,.45);">{{ o.meta }}</span>
+                      <span style="margin-left:auto; display:flex; gap:6px;">
+                        <button type="button" onClick="{{ o.chatOpen }}" style="height:28px; padding:0 12px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12px; cursor:pointer;">Открыть чат</button>
+                        <button type="button" onClick="{{ o.resend }}" style="height:28px; padding:0 12px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:transparent; color:rgba(255,255,255,.6); font-size:12px; cursor:pointer;">Отправить повторно</button>
+                      </span>
+                    </div>
+                  </div>
+                </sc-for>
+                <sc-if value="{{ noOutreach }}" hint-placeholder-val="{{ false }}">
+                  <div style="padding:36px 12px; text-align:center;">
+                    <div style="font-size:14px; font-weight:600; color:#6EE7C1;">Открытых запросов нет</div>
+                  </div>
+                </sc-if>
+              </sc-if>
+
+              <sc-if value="{{ isSrc }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:2px 2px 6px;">
+                  <span style="font-size:12.5px; color:rgba(255,255,255,.6);">{{ srcSummary }}</span>
+                  <button type="button" onClick="{{ addSource }}" style="margin-left:auto; height:28px; padding:0 14px; border:none; border-radius:9999px; background:#fff; color:#000; font-size:12px; font-weight:600; cursor:pointer;">Добавить контрагента</button>
+                </div>
+
+                <sc-for list="{{ sources }}" as="s" hint-placeholder-count="3">
+                  <div style="padding:14px; border-radius:14px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1);">
+                    <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px;">
+                      <span style="display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 10px; border-radius:9999px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12);">
+                        <span style="width:6px; height:6px; border-radius:9999px; background:{{ s.dot }};"></span>
+                        <span style="font-size:11px; color:#E6F2FF;">{{ s.status }}</span>
+                      </span>
+                      <span style="font-size:13.5px; font-weight:600; color:#fff;">{{ s.cp }}</span>
+                      <span style="font-size:12px; color:rgba(255,255,255,.5);">{{ s.kind }}</span>
+                      <span style="margin-left:auto; font-size:11px; color:rgba(255,255,255,.35);">{{ s.positions }}</span>
+                      <span style="position:relative; display:flex;">
+                        <button type="button" onClick="{{ s.menu }}" aria-label="Действия" style="width:28px; height:28px; display:grid; place-items:center; border:1px solid rgba(255,255,255,.12); border-radius:9999px; background:rgba(255,255,255,.04); color:rgba(255,255,255,.7); cursor:pointer; transition:.2s;" style-hover="background:rgba(255,255,255,.1); color:#fff;">
+                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5h.01M12 12h.01M12 19h.01"></path></svg>
+                        </button>
+                        <sc-if value="{{ s.menuOn }}" hint-placeholder-val="{{ false }}">
+                          <span class="liquid-glass" style="position:absolute; top:32px; right:0; z-index:5; width:210px; border-radius:14px; padding:6px; display:flex; flex-direction:column; gap:2px;">
+                            <button type="button" onClick="{{ s.edit }}" style="text-align:left; padding:9px 11px; border:none; border-radius:10px; background:transparent; color:#E6F2FF; font-size:12.5px; cursor:pointer; transition:.2s;" style-hover="background:rgba(255,255,255,.08);">Редактировать</button>
+                            <button type="button" onClick="{{ s.exclude }}" style="text-align:left; padding:9px 11px; border:none; border-radius:10px; background:transparent; color:#E6F2FF; font-size:12.5px; cursor:pointer; transition:.2s;" style-hover="background:rgba(255,255,255,.08);">{{ s.excludeLabel }}</button>
+                            <button type="button" onClick="{{ s.remove }}" style="text-align:left; padding:9px 11px; border:none; border-radius:10px; background:transparent; color:#FF7B6B; font-size:12.5px; cursor:pointer; transition:.2s;" style-hover="background:rgba(255,123,107,.12);">Удалить</button>
+                          </span>
+                        </sc-if>
+                      </span>
+                    </div>
+
+                    <div style="font-size:12.5px; color:rgba(255,255,255,.7); margin-top:8px; overflow-wrap:break-word;">{{ s.address }}</div>
+                    <div style="font-size:11.5px; color:rgba(255,255,255,.45); margin-top:4px;">{{ s.meta }}</div>
+
+                    <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;">
+                      <button type="button" onClick="{{ s.edit }}" style="height:28px; padding:0 14px; border:none; border-radius:9999px; background:#fff; color:#000; font-size:12px; font-weight:600; cursor:pointer;">Настроить</button>
+                      <button type="button" onClick="{{ s.check }}" style="height:28px; padding:0 12px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12px; cursor:pointer;">Проверить подключение</button>
+                      <button type="button" onClick="{{ s.pause }}" style="height:28px; padding:0 12px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:transparent; color:rgba(255,255,255,.6); font-size:12px; cursor:pointer;">{{ s.pauseLabel }}</button>
+                    </div>
+                  </div>
+                </sc-for>
+
+                <sc-if value="{{ hasArchived }}" hint-placeholder-val="{{ false }}">
+                  <div style="padding:14px; border-radius:14px; background:rgba(255,255,255,.03); border:1px dashed rgba(255,255,255,.12);">
+                    <div style="font-size:11px; color:rgba(255,255,255,.45);">Архив</div>
+                    <div style="display:flex; flex-direction:column; gap:6px; margin-top:8px;">
+                      <sc-for list="{{ archived }}" as="a" hint-placeholder-count="1">
+                        <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px;">
+                          <span style="font-size:12.5px; color:rgba(255,255,255,.7);">{{ a.cp }}</span>
+                          <span style="font-size:11.5px; color:rgba(255,255,255,.4);">{{ a.meta }}</span>
+                          <button type="button" onClick="{{ a.restore }}" style="margin-left:auto; height:26px; padding:0 12px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:11.5px; cursor:pointer;">Восстановить</button>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </div>
+                </sc-if>
+
+                <div style="padding:14px; border-radius:14px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1);">
+                  <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px;">
+                    <span style="font-size:13.5px; font-weight:600; color:#fff;">Конфигурация источников</span>
+                    <span style="font-size:12px; color:rgba(255,255,255,.5);">{{ gh.repo }}</span>
+                    <span style="margin-left:auto; font-size:11px; color:rgba(255,255,255,.35);">{{ gh.synced }}</span>
+                  </div>
+                  <div style="font-size:12.5px; color:rgba(255,255,255,.7); margin-top:8px;">{{ gh.file }} · ветка {{ gh.branch }}</div>
+                  <p style="margin:6px 0 0; font-size:11.5px; line-height:1.55; color:rgba(255,255,255,.45);">В GitHub — только код и развёртывание. Настройки контрагентов, чатов и шаблонов живут в системе; токены хранятся в защищённом хранилище и в репозиторий не попадают.</p>
+                  <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;">
+                    <button type="button" onClick="{{ gh.sync }}" style="height:28px; padding:0 14px; border:none; border-radius:9999px; background:#fff; color:#000; font-size:12px; font-weight:600; cursor:pointer;">Синхронизировать</button>
+                    <button type="button" onClick="{{ gh.open }}" style="height:28px; padding:0 12px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:transparent; color:rgba(255,255,255,.6); font-size:12px; cursor:pointer;">Открыть конфиг</button>
+                  </div>
+                </div>
+
+                <div style="padding:14px; border-radius:14px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1);">
+                  <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px;">
+                    <span style="font-size:13.5px; font-weight:600; color:#fff;">Материалы и ссылки</span>
+                    <span style="margin-left:auto; font-size:11px; color:rgba(255,255,255,.35);">{{ linkCheckNote }}</span>
+                  </div>
+                  <div style="display:flex; flex-direction:column; gap:6px; margin-top:10px;">
+                    <sc-for list="{{ links }}" as="l" hint-placeholder-count="2">
+                      <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; padding:9px 11px; border-radius:12px; background:rgba(0,0,0,.22); border:1px solid rgba(255,255,255,.08);">
+                        <span style="width:6px; height:6px; border-radius:9999px; background:{{ l.dot }};"></span>
+                        <span style="font-size:12.5px; color:#E6F2FF;">{{ l.label }}</span>
+                        <span style="font-size:11.5px; color:rgba(255,255,255,.45);">{{ l.meta }}</span>
+                        <a href="{{ l.url }}" target="_blank" rel="noopener" style="margin-left:auto; font-size:11.5px;">открыть</a>
+                      </div>
+                    </sc-for>
+                  </div>
+                  <p style="margin:9px 0 0; font-size:11.5px; line-height:1.55; color:rgba(255,255,255,.45);">Ссылка не удаляется: источник хранится, перепроверяется автоматически, а у заказчика запрашивается актуальная.</p>
+                </div>
+              </sc-if>
+
+            </div>
+          </div>
+        </section>
+      </div>
+    </sc-if>
+  </div>
+
+  <sc-if value="{{ gOpen }}" hint-placeholder-val="{{ false }}">
+    <div role="dialog" aria-modal="true" aria-label="Незаполненные поля" style="position:fixed; inset:0; z-index:80; display:grid; place-items:center; padding:20px;">
+      <div onClick="{{ gClose }}" style="position:absolute; inset:0; background:rgba(4,7,14,.66); backdrop-filter:blur(3px);"></div>
+      <div class="liquid-glass appScroll" style="width:min(460px,100%); max-height:calc(100vh - 40px); overflow-y:auto; border-radius:16px; padding:24px; animation:appFade .25s cubic-bezier(.22,1,.36,1) both;">
+        <h3 style="margin:0 0 4px; font-size:16px; font-weight:700; color:#fff;">{{ gTitle }}</h3>
+        <p style="margin:0 0 16px; font-size:12.5px; line-height:1.55; color:rgba(255,255,255,.5);">Эти поля не заполнены в заявке — их нельзя озвучивать кандидату, пока заказчик не ответит.</p>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <sc-for list="{{ gList }}" as="g" hint-placeholder-count="3">
+            <div style="display:flex; align-items:flex-start; gap:9px; padding:11px 12px; border-radius:12px; background:rgba(20,30,52,.4); border:1px solid rgba(255,255,255,.1);">
+              <span style="flex:none; width:6px; height:6px; border-radius:9999px; background:{{ g.dot }}; margin-top:6px;"></span>
+              <span style="flex:1; min-width:0;">
+                <span style="display:block; font-size:13px; color:#E6F2FF;">{{ g.k }}</span>
+                <span style="display:block; font-size:11.5px; color:rgba(255,255,255,.45); margin-top:2px;">{{ g.why }}</span>
+              </span>
+            </div>
+          </sc-for>
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px;">
+          <button type="button" onClick="{{ gClose }}" style="height:34px; padding:0 14px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:rgba(255,255,255,.75); font-size:12px; font-weight:600; cursor:pointer;">Закрыть</button>
+          <button type="button" onClick="{{ gAsk }}" style="height:34px; padding:0 16px; border:none; border-radius:9999px; background:#fff; color:#000; font-size:12px; font-weight:600; cursor:pointer;">Запросить у заказчика</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ dOpen }}" hint-placeholder-val="{{ false }}">
+    <div role="dialog" aria-modal="true" aria-label="Подробнее о позиции" style="position:fixed; inset:0; z-index:80; display:grid; place-items:center; padding:20px;">
+      <div onClick="{{ dClose }}" style="position:absolute; inset:0; background:rgba(4,7,14,.66); backdrop-filter:blur(3px);"></div>
+      <div class="liquid-glass appScroll" style="width:min(640px,100%); max-height:calc(100vh - 40px); overflow-y:auto; border-radius:16px; padding:24px; animation:appFade .25s cubic-bezier(.22,1,.36,1) both;">
+
+        <div style="display:flex; flex-wrap:wrap; align-items:baseline; gap:8px 10px;">
+          <h3 style="margin:0; font-size:18px; font-weight:700; letter-spacing:-.02em; color:#fff;">{{ dProf }}</h3>
+          <span style="font-size:13px; color:rgba(255,255,255,.6);">{{ dPlace }}</span>
+          <span style="margin-left:auto; font-size:11.5px; color:rgba(255,255,255,.4); font-variant-numeric:tabular-nums;">{{ dId }}</span>
+        </div>
+        <p style="margin:6px 0 0; font-size:13px; font-weight:400; line-height:1.5; color:rgba(255,255,255,.6);">{{ dObjLine }}</p>
+
+        <div class="liquid-glass" style="border-radius:12px; padding:12px 14px; margin-top:14px;">
+          <div style="font-size:11px; color:rgba(255,255,255,.45);">Ставка рекрутера</div>
+          <sc-if value="{{ dRecKnown }}" hint-placeholder-val="{{ true }}">
+            <div style="font-size:18px; font-weight:600; letter-spacing:-.02em; color:#fff; margin-top:4px;">{{ dRecValue }}</div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:6px 14px; margin-top:8px;">
+              <sc-for list="{{ dRecRows }}" as="r" hint-placeholder-count="4">
+                <div>
+                  <span style="font-size:11px; color:rgba(255,255,255,.45);">{{ r.k }}</span>
+                  <span style="display:block; font-size:12.5px; color:#E6F2FF; margin-top:2px; line-height:1.4;">{{ r.v }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+          <sc-if value="{{ dRecGap }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+              <span style="width:6px; height:6px; border-radius:9999px; background:#D9A441; box-shadow:0 0 8px #D9A441;"></span>
+              <span style="font-size:13px; color:#D9A441;">Ставка не задана — процент от ставки кандидата не считается автоматически</span>
+            </div>
+          </sc-if>
+        </div>
+
+        <sc-for list="{{ dGroups }}" as="g" hint-placeholder-count="4">
+          <div style="margin-top:16px;">
+            <div style="display:flex; align-items:center; gap:9px;">
+              <span style="font-size:11px; color:rgba(255,255,255,.45);">{{ g.title }}</span>
+              <span style="flex:1; height:1px; background:rgba(255,255,255,.1);"></span>
+            </div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:8px; margin-top:8px;">
+              <sc-for list="{{ g.rows }}" as="f" hint-placeholder-count="4">
+                <div class="liquid-glass" style="border-radius:12px; padding:10px 12px;">
+                  <div style="font-size:11px; color:rgba(255,255,255,.45);">{{ f.k }}</div>
+                  <sc-if value="{{ f.ok }}" hint-placeholder-val="{{ true }}">
+                    <div style="font-size:13px; font-weight:400; line-height:1.45; color:#E6F2FF; margin-top:5px;">{{ f.v }}</div>
+                  </sc-if>
+                  <sc-if value="{{ f.no }}" hint-placeholder-val="{{ false }}">
+                    <div style="font-size:13px; font-weight:400; line-height:1.45; color:rgba(255,255,255,.6); margin-top:5px;">{{ f.v }}</div>
+                  </sc-if>
+                  <sc-if value="{{ f.def }}" hint-placeholder-val="{{ false }}">
+                    <div style="font-size:13px; font-weight:400; line-height:1.45; color:#E6F2FF; margin-top:5px;">{{ f.v }}</div>
+                    <div style="font-size:11.5px; color:#D9A441; margin-top:3px;">по умолчанию</div>
+                  </sc-if>
+                  <sc-if value="{{ f.conf }}" hint-placeholder-val="{{ false }}">
+                    <div style="font-size:12.5px; color:#FF7B6B; margin-top:5px; line-height:1.4;">конфликт: {{ f.v }}</div>
+                  </sc-if>
+                  <sc-if value="{{ f.na }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex; align-items:center; gap:6px; margin-top:5px;">
+                      <span style="flex:none; width:6px; height:6px; border-radius:9999px; background:#64748B;"></span>
+                      <span style="font-size:12.5px; color:#64748B;">не указано</span>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-for>
+
+        <sc-if value="{{ dHasMedia }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top:16px;">
+            <div style="display:flex; align-items:center; gap:9px;">
+              <span style="font-size:11px; color:rgba(255,255,255,.45);">Материалы</span>
+              <span style="flex:1; height:1px; background:rgba(255,255,255,.1);"></span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:6px; margin-top:8px;">
+              <sc-for list="{{ dMedia }}" as="m" hint-placeholder-count="2">
+                <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; padding:9px 12px; border-radius:12px; background:rgba(20,30,52,.4); border:1px solid rgba(255,255,255,.1);">
+                  <span style="font-size:12.5px; color:#E6F2FF;">{{ m.label }}</span>
+                  <span style="font-size:11px; color:rgba(255,255,255,.4);">{{ m.meta }}</span>
+                  <sc-if value="{{ m.dead }}" hint-placeholder-val="{{ false }}">
+                    <span style="font-size:11px; color:#D9A441;">ссылка недоступна</span>
+                  </sc-if>
+                  <a href="{{ m.url }}" target="_blank" rel="noopener" style="margin-left:auto; font-size:11.5px;">открыть</a>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ dHasRaw }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top:16px;">
+            <div style="display:flex; align-items:center; gap:9px;">
+              <span style="font-size:11px; color:rgba(255,255,255,.45);">Как пришло от заказчика</span>
+              <span style="flex:1; height:1px; background:rgba(255,255,255,.1);"></span>
+            </div>
+            <pre style="margin:8px 0 0; padding:14px; border-radius:12px; background:rgba(10,15,30,.6); border:1px solid rgba(255,255,255,.1); font-family:'Inter',system-ui,sans-serif; font-size:12.5px; font-weight:400; line-height:1.65; color:rgba(255,255,255,.75); white-space:pre-wrap; word-break:break-word;">{{ dRaw }}</pre>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ dInternal }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; margin-top:14px; padding:10px 12px; border-radius:12px; background:rgba(255,255,255,.04); border:1px dashed rgba(255,255,255,.14);">
+            <span style="font-size:10px; letter-spacing:.06em; color:rgba(255,255,255,.4);">только внутри</span>
+            <span style="font-size:12px; color:rgba(255,255,255,.7);">{{ dCp }}</span>
+            <span style="font-size:12px; color:rgba(255,255,255,.5);">{{ dObj }}</span>
+            <span style="margin-left:auto; font-size:11.5px; color:rgba(255,255,255,.4);">{{ dSrcLine }}</span>
+          </div>
+        </sc-if>
+
+        <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
+          <button type="button" onClick="{{ dClose }}" style="height:34px; padding:0 14px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:rgba(255,255,255,.75); font-size:12px; font-weight:600; cursor:pointer;">Закрыть</button>
+          <button type="button" onClick="{{ dText }}" style="height:34px; padding:0 16px; border:none; border-radius:9999px; background:#fff; color:#000; font-size:12px; font-weight:600; cursor:pointer; transition:.2s;" style-hover="background:rgba(255,255,255,.9);" style-active="transform:scale(.98);">Текст кандидату</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ mOpen }}" hint-placeholder-val="{{ false }}">
+    <div role="dialog" aria-modal="true" aria-label="Текст для кандидата" style="position:fixed; inset:0; z-index:80; display:grid; place-items:center; padding:20px;">
+      <div onClick="{{ mClose }}" style="position:absolute; inset:0; background:rgba(4,7,14,.66); backdrop-filter:blur(3px);"></div>
+      <div class="liquid-glass appScroll" style="width:min(560px,100%); max-height:calc(100vh - 40px); overflow-y:auto; border-radius:16px; padding:24px; animation:appFade .25s cubic-bezier(.22,1,.36,1) both;">
+        <h3 style="margin:0 0 4px; font-size:16px; font-weight:700; color:#fff;">Текст для кандидата</h3>
+        <p style="margin:0 0 16px; font-size:12.5px; line-height:1.55; color:rgba(255,255,255,.5);">Контрагент и объект вырезаны, работодатель показан алиасом. Ставка рекрутера и незаполненные поля в текст не попадают.</p>
+
+        <div style="display:flex; align-items:center; gap:8px; padding:10px 12px; border-radius:12px; background:rgba(164,244,253,.1); border:1px solid rgba(164,244,253,.3);">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#A4F4FD" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 7v5c0 4.4 3.2 8.3 8 9 4.8-.7 8-4.6 8-9V7z"></path></svg>
+          <span style="font-size:12.5px; color:#A4F4FD;">{{ mAlias }}</span>
+        </div>
+
+        <pre style="margin:14px 0 0; padding:16px; border-radius:12px; background:rgba(10,15,30,.6); border:1px solid rgba(255,255,255,.1); font-family:'Inter',system-ui,sans-serif; font-size:13.5px; font-weight:400; line-height:1.7; color:#E6F2FF; white-space:pre-wrap; word-break:break-word;">{{ mText }}</pre>
+
+        <sc-if value="{{ mHasMedia }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top:16px;">
+            <div style="display:flex; align-items:center; gap:9px;">
+              <span style="font-size:11px; color:rgba(255,255,255,.45);">Дополнительные материалы</span>
+              <span style="flex:1; height:1px; background:rgba(255,255,255,.1);"></span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:4px; margin-top:8px;">
+              <sc-for list="{{ mMedia }}" as="m" hint-placeholder-count="2">
+                <sc-if value="{{ m.pickable }}" hint-placeholder-val="{{ true }}">
+                  <button type="button" onClick="{{ m.toggle }}" style="display:flex; align-items:center; gap:10px; width:100%; padding:9px 10px; border:none; border-radius:10px; background:transparent; text-align:left; cursor:pointer; transition:.2s;" style-hover="background:rgba(255,255,255,.05);">
+                    <sc-if value="{{ m.on }}" hint-placeholder-val="{{ false }}">
+                      <span style="flex:none; width:17px; height:17px; border-radius:5px; border:1px solid rgba(164,244,253,.55); background:rgba(164,244,253,.12); display:grid; place-items:center; color:#A4F4FD;">
+                        <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+                      </span>
+                    </sc-if>
+                    <sc-if value="{{ m.off }}" hint-placeholder-val="{{ true }}">
+                      <span style="flex:none; width:17px; height:17px; border-radius:5px; border:1px solid rgba(148,180,230,.3);"></span>
+                    </sc-if>
+                    <span style="flex:1; min-width:0;">
+                      <span style="display:block; font-size:13px; color:#E6F2FF;">{{ m.label }}</span>
+                      <span style="display:block; font-size:11px; color:rgba(255,255,255,.4); margin-top:1px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ m.url }}</span>
+                    </span>
+                  </button>
+                </sc-if>
+                <sc-if value="{{ m.blocked }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex; align-items:center; gap:10px; width:100%; padding:9px 10px; border-radius:10px; background:rgba(217,164,65,.1); border:1px solid rgba(217,164,65,.3);">
+                    <span style="flex:none; display:flex; color:#D9A441;">
+                      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v5M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>
+                    </span>
+                    <span style="flex:1; min-width:0;">
+                      <span style="display:block; font-size:13px; color:#D9A441;">{{ m.label }}</span>
+                      <span style="display:block; font-size:11px; color:rgba(255,255,255,.45); margin-top:1px;">{{ m.blockReason }}</span>
+                    </span>
+                  </div>
+                </sc-if>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ mHasRemoved }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top:14px; padding:12px; border-radius:12px; background:rgba(217,164,65,.12); border:1px solid rgba(217,164,65,.30);">
+            <div style="font-size:12px; font-weight:600; color:#D9A441;">Вырезано стоп-словарём</div>
+            <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;">
+              <sc-for list="{{ mRemoved }}" as="r" hint-placeholder-count="2">
+                <span style="height:24px; display:inline-flex; align-items:center; padding:0 9px; border-radius:9999px; background:rgba(217,164,65,.14); font-size:11.5px; color:#D9A441;">{{ r.t }}</span>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px;">
+          <button type="button" onClick="{{ mClose }}" style="height:34px; padding:0 14px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:rgba(255,255,255,.75); font-size:12px; font-weight:600; cursor:pointer;">Закрыть</button>
+          <button type="button" onClick="{{ mCopy }}" style="height:34px; padding:0 16px; border:none; border-radius:9999px; background:#fff; color:#000; font-size:12px; font-weight:600; cursor:pointer; transition:.2s;" style-hover="background:rgba(255,255,255,.9);" style-active="transform:scale(.98);">{{ mCopyLabel }}</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ authOpen }}" hint-placeholder-val="{{ false }}">
+    <div role="dialog" aria-modal="true" aria-label="Вход в админ-панель" style="position:fixed; inset:0; z-index:90; display:grid; place-items:center; padding:20px;">
+      <div onClick="{{ authCancel }}" style="position:absolute; inset:0; background:rgba(4,7,14,.66); backdrop-filter:blur(3px);"></div>
+      <div class="liquid-glass" style="width:min(380px,100%); border-radius:16px; padding:24px; animation:appFade .25s cubic-bezier(.22,1,.36,1) both;">
+        <h3 style="margin:0 0 4px; font-size:16px; font-weight:700; color:#fff;">Введите пароль администратора</h3>
+        <p style="margin:0 0 16px; font-size:12.5px; line-height:1.55; color:rgba(255,255,255,.5);">Спросим один раз на этом устройстве.</p>
+        <input type="password" placeholder="Пароль" value="{{ authPass }}" onChange="{{ onAuthPass }}" onKeyDown="{{ onAuthKey }}" style="width:100%; height:38px; padding:0 14px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:13px; outline:none;" style-focus="border-color:rgba(255,255,255,.4);">
+        <sc-if value="{{ authErr }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex; align-items:center; gap:6px; margin-top:9px;">
+            <span style="width:6px; height:6px; border-radius:9999px; background:#FF7B6B;"></span>
+            <span style="font-size:12px; color:#FF7B6B;">Неверный пароль</span>
+          </div>
+        </sc-if>
+        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px;">
+          <button type="button" onClick="{{ authCancel }}" style="height:34px; padding:0 14px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:rgba(255,255,255,.75); font-size:12px; font-weight:600; cursor:pointer;">Отмена</button>
+          <button type="button" onClick="{{ authSubmit }}" style="height:34px; padding:0 18px; border:none; border-radius:9999px; background:#fff; color:#000; font-size:12px; font-weight:600; cursor:pointer;">Войти</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ delOpen }}" hint-placeholder-val="{{ false }}">
+    <div role="dialog" aria-modal="true" aria-label="Удаление контрагента" style="position:fixed; inset:0; z-index:88; display:grid; place-items:center; padding:20px;">
+      <div onClick="{{ delCancel }}" style="position:absolute; inset:0; background:rgba(4,7,14,.66); backdrop-filter:blur(3px);"></div>
+      <div class="liquid-glass" style="width:min(420px,100%); border-radius:16px; padding:24px; animation:appFade .25s cubic-bezier(.22,1,.36,1) both;">
+        <h3 style="margin:0 0 4px; font-size:16px; font-weight:700; color:#fff;">Удалить контрагента «{{ delName }}»?</h3>
+        <p style="margin:0 0 16px; font-size:12.5px; line-height:1.55; color:rgba(255,255,255,.6);">{{ delNote }}</p>
+        <div style="font-size:11.5px; color:rgba(255,255,255,.5); margin-bottom:6px;">Введите пароль администратора</div>
+        <input type="password" placeholder="Пароль" value="{{ delPass }}" onChange="{{ onDelPass }}" onKeyDown="{{ onDelKey }}" style="width:100%; height:34px; padding:0 14px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:13px; outline:none;" style-focus="border-color:rgba(255,255,255,.4);">
+        <sc-if value="{{ delErr }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex; align-items:center; gap:6px; margin-top:9px;">
+            <span style="width:6px; height:6px; border-radius:9999px; background:#FF7B6B;"></span>
+            <span style="font-size:12px; color:#FF7B6B;">Неверный пароль</span>
+          </div>
+        </sc-if>
+        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px;">
+          <button type="button" onClick="{{ delCancel }}" style="height:34px; padding:0 14px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:rgba(255,255,255,.75); font-size:12px; font-weight:600; cursor:pointer;">Отмена</button>
+          <button type="button" onClick="{{ delConfirm }}" style="height:34px; padding:0 16px; border:1px solid rgba(248,113,113,.35); border-radius:9999px; background:rgba(255,123,107,.14); color:#FF7B6B; font-size:12px; font-weight:600; cursor:pointer;">Подтвердить</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ cpOpen }}" hint-placeholder-val="{{ false }}">
+    <div role="dialog" aria-modal="true" aria-label="Настройки контрагента" style="position:fixed; inset:0; z-index:85; display:grid; place-items:center; padding:20px;">
+      <div onClick="{{ cpCancel }}" style="position:absolute; inset:0; background:rgba(4,7,14,.66); backdrop-filter:blur(3px);"></div>
+      <div class="liquid-glass appScroll" style="width:min(560px,100%); max-height:calc(100vh - 40px); overflow-y:auto; border-radius:16px; padding:24px; animation:appFade .25s cubic-bezier(.22,1,.36,1) both;">
+        <h3 style="margin:0 0 4px; font-size:16px; font-weight:700; color:#fff;">{{ cpTitle }}</h3>
+        <p style="margin:0 0 16px; font-size:12.5px; line-height:1.55; color:rgba(255,255,255,.5);">Настройки хранятся в системе. Токен не попадает в GitHub и в выгрузки.</p>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:10px;">
+          <label style="display:block;">
+            <span style="display:block; font-size:11.5px; color:rgba(255,255,255,.5); margin-bottom:5px;">Тип источника</span>
+            <select value="{{ cpKind }}" onChange="{{ cpKindSet }}" style="width:100%; height:32px; padding:0 11px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12.5px; outline:none; cursor:pointer;">
+              <option value="Telegram-чат">Telegram-чат</option>
+              <option value="Google-таблица">Google-таблица</option>
+            </select>
+          </label>
+          <sc-for list="{{ cpFields }}" as="f" hint-placeholder-count="8">
+            <label style="display:block;">
+              <span style="display:block; font-size:11.5px; color:rgba(255,255,255,.5); margin-bottom:5px;">{{ f.label }}</span>
+              <input type="text" value="{{ f.v }}" onChange="{{ f.set }}" style="width:100%; height:32px; padding:0 13px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12.5px; outline:none;" style-focus="border-color:rgba(255,255,255,.4);">
+              <sc-if value="{{ f.secret }}" hint-placeholder-val="{{ false }}">
+                <span style="display:block; font-size:11px; color:rgba(255,255,255,.4); margin-top:4px;">хранится в защищённом хранилище, показан частично</span>
+              </sc-if>
+            </label>
+          </sc-for>
+        </div>
+
+        <div style="margin-top:16px;">
+          <div style="font-size:11.5px; color:rgba(255,255,255,.5); margin-bottom:7px;">Обязательные поля заявки — по ним уходит запрос</div>
+          <div style="display:flex; flex-wrap:wrap; gap:6px;">
+            <sc-for list="{{ cpReq }}" as="r" hint-placeholder-count="5">
+              <sc-if value="{{ r.on }}" hint-placeholder-val="{{ true }}">
+                <button type="button" onClick="{{ r.toggle }}" style="height:28px; padding:0 12px; border:1px solid rgba(164,244,253,.45); border-radius:9999px; background:rgba(164,244,253,.12); color:#A4F4FD; font-size:12px; cursor:pointer;">{{ r.t }}</button>
+              </sc-if>
+              <sc-if value="{{ r.off }}" hint-placeholder-val="{{ false }}">
+                <button type="button" onClick="{{ r.toggle }}" style="height:28px; padding:0 12px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:transparent; color:rgba(255,255,255,.55); font-size:12px; cursor:pointer;">{{ r.t }}</button>
+              </sc-if>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="margin-top:16px;">
+          <div style="font-size:11.5px; color:rgba(255,255,255,.5); margin-bottom:7px;">Шаблон сообщения · {позиции} и {поля} подставляются автоматически</div>
+          <textarea rows="4" value="{{ cpTpl }}" onChange="{{ cpTplSet }}" style="width:100%; padding:12px 14px; border:1px solid rgba(255,255,255,.14); border-radius:14px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12.5px; line-height:1.6; outline:none; resize:vertical; font-family:'Inter',system-ui,sans-serif;" style-focus="border-color:rgba(255,255,255,.4);"></textarea>
+        </div>
+
+        <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:14px; padding:10px 12px; border-radius:12px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1);">
+          <span style="font-size:11.5px; color:rgba(255,255,255,.5);">Последняя доставка: {{ cpDelivery }}</span>
+          <span style="margin-left:auto; display:flex; flex-wrap:wrap; gap:6px;">
+            <button type="button" onClick="{{ cpTest }}" style="height:28px; padding:0 12px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12px; cursor:pointer;">Проверить подключение</button>
+            <button type="button" onClick="{{ cpTestMsg }}" style="height:28px; padding:0 12px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:transparent; color:rgba(255,255,255,.6); font-size:12px; cursor:pointer;">Отправить тестовое</button>
+          </span>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px;">
+          <button type="button" onClick="{{ cpCancel }}" style="height:34px; padding:0 14px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:rgba(255,255,255,.75); font-size:12px; font-weight:600; cursor:pointer;">Отмена</button>
+          <button type="button" onClick="{{ cpSave }}" style="height:34px; padding:0 18px; border:none; border-radius:9999px; background:#fff; color:#000; font-size:12px; font-weight:600; cursor:pointer;">Сохранить</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ toastOn }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed; left:50%; bottom:26px; transform:translateX(-50%); z-index:90; animation:appFade .25s cubic-bezier(.22,1,.36,1) both;">
+      <div class="liquid-glass" style="border-radius:9999px; padding:11px 20px; font-size:12.5px; color:#fff; white-space:nowrap;">{{ toast }}</div>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;employerDisplay&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;alias&quot;,&quot;type&quot;,&quot;geo&quot;,&quot;none&quot;],&quot;default&quot;:&quot;alias&quot;,&quot;tsType&quot;:&quot;'alias' | 'type' | 'geo' | 'none'&quot;,&quot;section&quot;:&quot;Показ работодателя&quot;},&quot;showInternal&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Показ работодателя&quot;},&quot;gapHighlight&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Качество данных&quot;},&quot;radiusDefault&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:0,&quot;min&quot;:0,&quot;max&quot;:200,&quot;step&quot;:25,&quot;unit&quot;:&quot;км&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Города&quot;}}">
+class Component extends DCLogic {
+  state = {
+    screen: 'search',
+    sel: ['Москва'],
+    radius: 0,
+    citySearch: '',
+    q: '',
+    rateMin: '',
+    recPct: '',
+    ageCand: '',
+    fRec: '', fHouse: '', fMeals: '', fCit: '', fGender: '', fMed: '', fSb: '', fSched: '', fPay: '',
+    scope: 'all',
+    adminTab: 'exc',
+    cpEdit: null,
+    cpMenu: null,
+    cpDelete: null,
+    delPass: '',
+    delErr: false,
+    authOpen: false,
+    authPass: '',
+    authErr: false,
+    authOk: false,
+    moreOpen: false,
+    sort: 'rate',
+    modal: null,
+    detail: null,
+    gaps: null,
+    picks: {},
+    fixes: {},
+    drafts: {},
+    log: [],
+    qType: '', qSrc: '', qCp: '', qDate: '',
+    copied: false,
+    pick: 'ELT-2026-000418-02',
+    toast: ''
+  };
+
+  CITIES = [
+    { name: 'Москва', region: 'Москва', lat: 55.7558, lon: 37.6176 },
+    { name: 'Чехов', region: 'Московская область', lat: 55.1477, lon: 37.4569 },
+    { name: 'Домодедово', region: 'Московская область', lat: 55.4406, lon: 37.7519 },
+    { name: 'Подольск', region: 'Московская область', lat: 55.4312, lon: 37.5457 },
+    { name: 'Пушкино', region: 'Московская область', lat: 56.0106, lon: 37.8471 },
+    { name: 'Троицк', region: 'Москва', lat: 55.4841, lon: 37.3078 },
+    { name: 'Владимир', region: 'Владимирская область', lat: 56.1290, lon: 40.4070 },
+    { name: 'Павлово', region: 'Нижегородская область', lat: 55.9645, lon: 43.0898 },
+    { name: 'Санкт-Петербург', region: 'Санкт-Петербург', lat: 59.9391, lon: 30.3159 },
+    { name: 'Шушары', region: 'Санкт-Петербург', lat: 59.7906, lon: 30.3990 }
+  ];
+
+  // Слой 3 — внутренняя таблица мотивации. Никогда не считается от ставки кандидата.
+  RECRUITER_RATES = {
+    'ФМ Логистик': { kind: 'percent', value: 20, baseAmount: 21000, base: 'оплата контрагента за кандидата', rule: '10 смен', stage: 'следующая выплата', guar: '30 дней' },
+    'КПК': { kind: 'fixed', value: 4500, base: 'фикс за кандидата', rule: '5 смен', stage: '2 раза в месяц', guar: '14 дней' },
+    'Озон': { kind: 'percent', value: 18, baseAmount: 20000, base: 'оплата контрагента за кандидата', rule: '5 смен', stage: 'еженедельно', guar: '21 день' },
+    'Все инструменты': { kind: 'fixed', value: 5000, base: 'фикс за кандидата', rule: 'после 10-й смены', stage: '2 раза в месяц', guar: '30 дней' },
+    'Молком': { kind: 'percent', value: 15, baseAmount: 19500, base: 'оплата контрагента за кандидата', rule: 'от 15 смен', stage: 'по закрытии вахты', guar: '30 дней' },
+    'БИГ': { kind: 'fixed', value: 3800, base: 'фикс за кандидата', rule: 'после 3-й смены', stage: '2 раза в месяц', guar: '14 дней' },
+    'Лента': { kind: 'percent', value: 12, baseAmount: 18000, base: 'оплата контрагента за кандидата', rule: 'от 10 смен', stage: 'следующая выплата', guar: '30 дней' },
+    'Миксит': { kind: 'fixed', value: 4000, base: 'фикс за кандидата', rule: 'после 5-й смены', stage: '2 раза в месяц', guar: '14 дней' }
+  };
+
+  // Слой 2 — нормализованные позиции.
+  ROWS = [
+    { id: 'ELT-2026-000466-01', ext: 'AM-4471', src: 'Аметист', seen: 'сегодня 12:04',
+      cp: 'ФМ Логистик', cpAlias: 'Федеральный логистический оператор', cpType: 'Логистический комплекс', obj: 'Склад Климовск',
+      prof: 'Оператор погрузчика', city: 'Подольск', district: 'Климовск', addr: 'ул. Заводская, 2',
+      rate: 4200, unit: 'смена', net: 'на руки', sched: 'вахта от 30 смен', schedKind: 'вахта', hours: 11, shiftType: 'дневная и ночная', minShifts: 30,
+      m: 3, w: 0, c: 0, gender: 'мужчины', ageTo: 50, cits: ['РФ'], req: 'права на ВПТ, опыт от 6 месяцев',
+      med: 'no', sb: 'part', test: 'no',
+      house: { st: 'yes', cost: 'free', type: 'общежитие', per: 4, linen: true, transfer: 'вахтовый автобус' },
+      meals: { st: 'free', times: 1 },
+      travel: { st: 'yes', full: 'part', amount: 'до 5 000 ₽', when: 'после 30 смен', route: 'в обе стороны' },
+      pay: { st: 'yes', freq: '2 раза в месяц', advance: 'yes', advAfter: 15 },
+      ded: [], dedSt: 'no',
+      media: [
+        { kind: 'housing_photo', title: 'Общежитие Климовск', url: 'https://disk.example.ru/klimovsk-dorm', vis: 'public', alive: true, src: 'Аметист', upd: '11 августа' },
+        { kind: 'object_photo', title: 'Склад изнутри', url: 'https://disk.example.ru/klimovsk-wh', vis: 'public', alive: true, src: 'Аметист', upd: '11 августа' },
+        { kind: 'route', title: 'Маршрут до склада', url: 'https://yandex.ru/maps/-/klimovsk', vis: 'public', alive: true, src: 'внесено вручную', upd: '12 августа' }
+      ] },
+
+    { id: 'ELT-2026-000418-02', ext: 'KPK-118', src: 'КПК', seen: 'сегодня 12:04',
+      cp: 'КПК', cpAlias: 'Федеральное пищевое производство', cpType: 'Пищевое производство', obj: 'Производство Павлово',
+      prof: 'Разнорабочий', city: 'Павлово', district: '', addr: '',
+      rate: 4070, unit: 'смена', net: 'на руки', sched: '6/1 по 12 ч', schedKind: '6/1', hours: 12, shiftType: '', minShifts: 0,
+      m: 20, w: 0, c: 0, gender: 'мужчины', ageFrom: 20, ageTo: 50, cits: ['РФ', 'РБ'], req: 'пищевая медкнижка, можно оформить у нас',
+      med: 'arranged', sb: 'none', test: 'na',
+      house: { st: 'yes', cost: 'free', type: 'общежитие', per: null, linen: null, transfer: '' },
+      meals: { st: 'free', times: 1, note: 'обед на производстве' },
+      travel: { st: 'no' },
+      pay: { st: 'yes', freq: '2 раза в месяц', advance: 'no' },
+      ded: [{ basis: 'Медкнижка', amount: 2800, unit: 'once', when: 'из первой выплаты', refund: 'no' }], dedSt: 'yes',
+      media: [
+        { kind: 'housing_photo', title: 'Общежитие Павлово', url: 'https://disk.example.ru/pavlovo-dorm', vis: 'public', alive: true, src: 'КПК', upd: '10 августа' },
+        { kind: 'route', title: 'Как добраться', url: 'https://t.me/kpk_vahta/318', vis: 'public', alive: false, src: 'КПК', upd: '2 августа' }
+      ] },
+
+    { id: 'ELT-2026-000455-02', ext: 'MS-2210', src: 'Маркетстафф', seen: 'сегодня 13:02',
+      cp: 'Озон', cpAlias: 'Федеральный маркетплейс', cpType: 'Склад маркетплейса', obj: 'ФЦ Бутово',
+      prof: 'Грузчик', city: 'Москва', district: 'Юг, Бутово', addr: 'Южное Бутово',
+      rate: 3800, unit: 'смена', net: 'на руки', sched: '5/2 по 11 ч', schedKind: '5/2', hours: 11, shiftType: 'дневная', minShifts: 0,
+      m: 6, w: 0, c: 0, gender: 'мужчины', ageTo: 45, cits: ['РФ', 'РБ', 'КЗ'], req: 'без опыта, физически крепкий',
+      med: 'no', sb: 'full', test: 'no',
+      house: { st: 'no' },
+      meals: { st: 'paid', note: 'столовая на объекте' },
+      travel: { st: 'na' },
+      pay: { st: 'yes', freq: 'еженедельно', advance: 'no' },
+      ded: [{ basis: 'Питание', amount: 200, unit: 'shift', when: 'с выплаты', refund: 'no' }], dedSt: 'yes',
+      media: [
+        { kind: 'object_photo', title: 'ФЦ изнутри', url: 'https://disk.example.ru/butovo-fc', vis: 'public', alive: true, src: 'Маркетстафф', upd: '12 августа' },
+        { kind: 'route', title: 'Маршрут от метро', url: 'https://yandex.ru/maps/-/butovo', vis: 'public', alive: true, src: 'внесено вручную', upd: '12 августа' }
+      ] },
+
+    { id: 'ELT-2026-000412-01', ext: 'AM-4480', src: 'Аметист', seen: 'сегодня 12:04',
+      cp: 'ФМ Чехов', cpAlias: 'Федеральный логистический оператор', cpType: 'Логистический комплекс', obj: 'ФМ Логистик Чехов',
+      prof: 'Комплектовщик', city: 'Чехов', district: '', addr: 'Чехов, промзона',
+      rate: 3520, unit: 'смена', net: 'на руки', sched: 'вахта от 30 смен', schedKind: 'вахта', hours: 11, shiftType: 'дневная и ночная', minShifts: 30,
+      m: 11, w: 13, c: 2, gender: 'любые', ageTo: 45, cits: ['РФ'], req: 'опыт работы с ТСД',
+      med: 'no', sb: 'part', test: 'yes',
+      house: { st: 'yes', cost: 'free', type: 'общежитие', per: 8, linen: true, transfer: 'развозка' },
+      meals: { st: 'free', times: 1 },
+      travel: { st: 'yes', full: 'part', amount: 'билеты в одну сторону', when: 'после 20 смен', route: 'до объекта' },
+      pay: { st: 'yes', freq: '2 раза в месяц', advance: 'yes', advAfter: 10 },
+      ded: [], dedSt: 'no',
+      media: [
+        { kind: 'housing_photo', title: 'Общежитие Чехов', url: 'https://disk.example.ru/chehov-dorm', vis: 'public', alive: true, src: 'Аметист', upd: '9 августа' },
+        { kind: 'object_photo', title: 'Склад Чехов', url: 'https://disk.example.ru/chehov-wh', vis: 'public', alive: true, src: 'Аметист', upd: '9 августа' }
+      ] },
+
+    { id: 'ELT-2026-000445-03', ext: 'VP-771', src: 'ВахтаПро', seen: 'сегодня 13:02',
+      cp: 'Все инструменты', cpAlias: 'Федеральный онлайн-ритейлер', cpType: 'Склад онлайн-ритейлера', obj: 'РЦ Домодедово',
+      prof: 'Комплектовщик СПК', city: 'Домодедово', district: '', addr: '',
+      rate: 3520, hourly: 320, unit: 'смена', net: 'на руки', sched: 'вахта от 15 смен', schedKind: 'вахта', hours: 11, shiftType: '', minShifts: 15,
+      m: 12, w: 0, c: 0, gender: 'мужчины', ageTo: 45, cits: ['РФ', 'РБ'], req: 'полный комплект документов',
+      med: 'no', sb: 'part', test: 'na',
+      house: { st: 'yes', cost: 'deduct', type: 'общежитие', per: null, linen: null, transfer: '' },
+      meals: { st: 'na' },
+      travel: { st: 'na' },
+      pay: { st: 'yes', freq: '2 раза в месяц', advance: 'na' },
+      ded: [{ basis: 'Проживание', amount: 6500, unit: 'month', when: 'с выплаты', refund: 'no' }], dedSt: 'yes',
+      media: [] },
+
+    { id: 'ELT-2026-000447-01', ext: 'AM-4488', src: 'Аметист', seen: 'сегодня 12:04',
+      cp: 'Молком', cpAlias: 'Федеральный складской оператор', cpType: 'Складской комплекс', obj: 'Молком Пушкино',
+      prof: 'Сборщик заказов', city: 'Пушкино', district: '', addr: 'Пушкино, Заводская',
+      rate: 3498, unit: 'смена', net: 'на руки', sched: 'вахта от 30 смен', schedKind: 'вахта', hours: 11, shiftType: 'дневная', minShifts: 30,
+      m: 5, w: 10, c: 2, gender: 'любые', ageTo: 45, cits: ['РФ'], req: 'опыт с ТСД',
+      med: 'no', sb: 'part', test: 'yes',
+      house: { st: 'yes', cost: 'free', type: 'общежитие', per: 4, linen: true, transfer: 'развозка' },
+      meals: { st: 'deduct', times: 2, note: 'столовая' },
+      travel: { st: 'yes', full: 'full', amount: 'билеты полностью', when: 'после вахты', route: 'в обе стороны' },
+      pay: { st: 'yes', freq: '2 раза в месяц', advance: 'no' },
+      ded: [{ basis: 'Питание', amount: 250, unit: 'day', when: 'с выплаты', refund: 'no' }], dedSt: 'yes',
+      media: [
+        { kind: 'housing_photo', title: 'Общежитие Пушкино', url: 'https://disk.example.ru/pushkino-dorm', vis: 'public', alive: true, src: 'Аметист', upd: '11 августа' },
+        { kind: 'object_photo', title: 'Склад Пушкино', url: 'https://disk.example.ru/pushkino-wh', vis: 'public', alive: true, src: 'Аметист', upd: '11 августа' },
+        { kind: 'route', title: 'Маршрут', url: 'https://yandex.ru/maps/-/pushkino', vis: 'public', alive: true, src: 'внесено вручную', upd: '12 августа' }
+      ] },
+
+    { id: 'ELT-2026-000431-01', ext: 'AM-4491', src: 'Аметист', seen: 'сегодня 12:04',
+      cp: 'БИГ', cpAlias: 'Российский производитель косметики', cpType: 'Косметическое производство', obj: 'БИГ Троицк',
+      prof: 'Работник линии производства', city: 'Троицк', district: '', addr: 'Троицк, промзона',
+      rate: 3300, unit: 'смена', net: 'на руки', sched: 'вахта от 20 смен', schedKind: 'вахта', hours: 11, shiftType: 'дневная', minShifts: 20,
+      m: 0, w: 5, c: 0, gender: 'женщины', ageTo: 57, cits: ['РФ', 'РБ'], req: 'без опыта, обучение на месте',
+      med: 'no', sb: 'none', test: 'no',
+      house: { st: 'na' },
+      meals: { st: 'free', times: 1 },
+      travel: { st: 'na' },
+      pay: { st: 'yes', freq: '2 раза в месяц', advance: 'no' },
+      ded: [], dedSt: 'no',
+      media: [
+        { kind: 'object_photo', title: 'Производство Троицк', url: 'https://disk.example.ru/troick-line', vis: 'public', alive: true, src: 'Аметист', upd: '8 августа' }
+      ] },
+
+    { id: 'ELT-2026-000461-01', ext: 'VP-780', src: 'ВахтаПро', seen: 'вчера 13:02',
+      cp: 'Мерлион', cpAlias: 'Федеральный дистрибьютор электроники', cpType: 'Дистрибьюторский склад', obj: 'РЦ Владимир',
+      prof: 'Кладовщик', city: 'Владимир', district: '', addr: 'Владимир, Северная',
+      rate: 3250, unit: 'смена', net: 'на руки', sched: 'вахта от 30 смен', schedKind: 'вахта', hours: 12, shiftType: 'дневная и ночная', minShifts: 30,
+      m: 4, w: 0, c: 0, gender: 'мужчины', ageTo: 50, cits: ['ЕАЭС'], req: 'опыт кладовщика от года',
+      med: 'no', sb: 'full', test: 'yes',
+      house: { st: 'yes', cost: 'free', type: 'общежитие', per: 6, linen: true, transfer: '' },
+      meals: { st: 'free', times: 2 },
+      travel: { st: 'yes', full: 'part', amount: 'до 3 000 ₽', when: 'после 30 смен', route: 'до объекта' },
+      pay: { st: 'yes', freq: '2 раза в месяц', advance: 'no' },
+      ded: [{ basis: 'Спецодежда', amount: 1500, unit: 'once', when: 'с первой выплаты', refund: 'yes', refundAfter: 30 }], dedSt: 'yes',
+      media: [
+        { kind: 'housing_photo', title: 'Общежитие Владимир', url: 'https://disk.example.ru/vladimir-dorm', vis: 'public', alive: false, src: 'ВахтаПро', upd: '28 июля' }
+      ] },
+
+    { id: 'ELT-2026-000452-01', ext: 'MS-2218', src: 'Маркетстафф', seen: 'сегодня 13:02',
+      cp: 'Лента', cpAlias: 'Федеральный продуктовый ритейлер', cpType: 'Распределительный центр ритейла', obj: 'РЦ Шушары',
+      prof: 'Упаковщик', city: 'Шушары', district: 'Санкт-Петербург', addr: '',
+      rate: 3100, unit: 'смена', net: '', sched: '2/2 по 12 ч', schedKind: '2/2', hours: 12, shiftType: '', minShifts: 0,
+      m: 0, w: 8, c: 0, gender: 'женщины', cits: [], req: 'без опыта',
+      med: 'na', sb: 'na', test: 'na',
+      house: { st: 'yes', cost: 'free', type: 'общежитие', per: null, linen: null, transfer: '' },
+      meals: { st: 'na' },
+      travel: { st: 'na' },
+      pay: { st: 'na' },
+      ded: [], dedSt: 'na',
+      media: [] },
+
+    { id: 'ELT-2026-000473-01', ext: 'VP-791', src: 'ВахтаПро', seen: 'сегодня 13:02',
+      cp: 'ФМ Чехов', cpAlias: 'Федеральный логистический оператор', cpType: 'Логистический комплекс', obj: 'ФМ Логистик Чехов',
+      prof: 'Комплектовщик', city: 'Чехов', district: '', addr: 'Чехов, промзона',
+      rate: 3520, unit: 'смена', net: 'на руки', sched: 'вахта от 30 смен', schedKind: 'вахта', hours: 11, shiftType: '', minShifts: 30,
+      m: 11, w: 13, c: 0, gender: 'любые', ageTo: 45, cits: ['РФ'], req: 'опыт работы с ТСД',
+      med: 'no', sb: 'part', test: 'yes',
+      house: { st: 'yes', cost: 'free', type: 'общежитие', per: 8, linen: true, transfer: 'развозка' },
+      meals: { st: 'free', times: 1 },
+      travel: { st: 'yes', full: 'part', amount: 'билеты в одну сторону', when: 'после 20 смен', route: 'до объекта' },
+      pay: { st: 'yes', freq: '2 раза в месяц', advance: 'yes', advAfter: 10 },
+      ded: [], dedSt: 'no',
+      media: [] },
+
+    { id: 'ELT-2026-000470-02', ext: 'VP-786', src: 'ВахтаПро', seen: 'сегодня 13:02',
+      cp: 'Миксит', cpAlias: 'Производитель бытовой химии', cpType: 'Химическое производство', obj: 'Миксит Чехов',
+      prof: 'Фасовщик', city: 'Чехов', district: '', addr: 'Чехов, промзона',
+      rate: 2950, unit: 'смена', net: 'на руки', sched: '6/1 по 12 ч', schedKind: '6/1', hours: 12, shiftType: '', minShifts: 0,
+      m: 0, w: 10, c: 0, gender: 'женщины', ageTo: 55, cits: ['РФ', 'РБ'], req: 'медкнижка обязательна',
+      med: 'need', sb: 'none', test: 'na',
+      house: { st: 'yes', cost: 'paid', type: 'общежитие', per: null, linen: null, transfer: '' },
+      meals: { st: 'na' },
+      travel: { st: 'no' },
+      pay: { st: 'yes', freq: '2 раза в месяц', advance: 'no' },
+      ded: [
+        { basis: 'Проживание', amount: 5000, unit: 'month', when: 'с выплаты', refund: 'no' },
+        { basis: 'Медкнижка', amount: 2800, unit: 'once', when: 'из первой выплаты', refund: 'no' }
+      ], dedSt: 'yes',
+      media: [
+        { kind: 'route', title: 'Маршрут до производства', url: 'https://yandex.ru/maps/-/mixit', vis: 'public', alive: true, src: 'внесено вручную', upd: '12 августа' }
+      ] }
+  ];
+
+  // Слой 1 — исходники.
+  RAW = {
+    'ELT-2026-000418-02': '🚀 Павлово, пищевое производство\nРазнорабочий, график 6/1 по 12 часов\n4070 руб/смена, выплаты 2 раза в месяц\nНужно 20 мужчин, 20-50 лет, РФ/РБ\nПищевая медкнижка обязательна — можно выйти без неё, оформляем за свой счёт\nПроживание бесплатно, обед на производстве\nПроезд не компенсируется',
+    'ELT-2026-000452-01': 'РЦ Шушары (Лента)\nУпаковщица, 2/2 по 12 ч, 3100 за смену\nНужно 8 женщин\nОбщежитие бесплатно\nВыход в течение 2 дней',
+    'ELT-2026-000445-03': 'Домодедово, Все инструменты\nКомплектовщик СПК, вахта от 15 смен\n320 р/час — 3520 р/смена (первые 3 смены, далее %)\nРФ/РБ, полный комплект документов, до 45 лет\n12 мужчин\nПроживание платно: вычет 6500 в месяц',
+    'ELT-2026-000470-02': 'Чехов, Миксит\nФасовщица 6/1 по 12 ч, 2950 руб смена\n10 женщин до 55, РФ/РБ\nМедкнижка обязательна\nПроживание 5000 в месяц',
+    'ELT-2026-000455-02': 'Южное Бутово, ФЦ маркетплейса\nГрузчик 5/2 по 11 ч, 3800 за смену\n6 мужчин до 45, РФ/РБ/КЗ\nСтоловая на объекте, 200 р за смену\nВыплаты еженедельно, полная проверка СБ'
+  };
+
+  RAWFIELD = {
+    'ELT-2026-000418-02': { 'Ставка кандидата': '4070 руб/смена', 'График': 'график 6/1 по 12 часов', 'Гражданство': 'РФ/РБ', 'Проживание': 'Проживание бесплатно', 'Питание': 'обед на производстве', 'Медкнижка': 'Пищевая медкнижка обязательна', 'Проезд': 'Проезд не компенсируется', 'Возраст': '20-50 лет' },
+    'ELT-2026-000452-01': { 'Должность': 'Упаковщица', 'Ставка кандидата': '3100 за смену', 'Проживание': 'Общежитие бесплатно', 'Потребность': 'Нужно 8 женщин' },
+    'ELT-2026-000445-03': { 'Ставка кандидата': '320 р/час — 3520 р/смена', 'Проживание': 'вычет 6500 в месяц', 'Гражданство': 'РФ/РБ' },
+    'ELT-2026-000470-02': { 'Должность': 'Фасовщица', 'Ставка кандидата': '2950 руб смена', 'Проживание': 'Проживание 5000 в месяц', 'Медкнижка': 'Медкнижка обязательна' },
+    'ELT-2026-000455-02': { 'Ставка кандидата': '3800 за смену', 'Питание': 'Столовая на объекте, 200 р за смену', 'Гражданство': 'РФ/РБ/КЗ' }
+  };
+
+  DICT_FIELDS = ['Должность', 'Город', 'Регион', 'График', 'Гражданство', 'Тип жилья'];
+
+  // Обязательность объявлена данными, а не интерфейсом. Всё, чего здесь нет, — необязательное: «Не указано», не ошибка.
+  REQUIRED = {
+    cits: 'Гражданство', house: 'Проживание', meals: 'Питание', pay: 'Выплаты',
+    rate: 'Ставка кандидата', sched: 'График', need: 'Потребность'
+  };
+
+  ISSUE_KINDS = {
+    conflict: { label: 'Обнаружена несостыковка', sev: 1, dot: '#FF7B6B' },
+    duplicate: { label: 'Возможный дубль', sev: 1, dot: '#FF7B6B' },
+    missing: { label: 'Не хватает данных', sev: 2, dot: '#D9A441' },
+    format: { label: 'Требует внимания', sev: 2, dot: '#D9A441' },
+    unparsed: { label: 'Требует внимания', sev: 2, dot: '#D9A441' },
+    source: { label: 'Ошибка источника', sev: 3, dot: '#D9A441' }
+  };
+
+  CONFLICTS = {
+    'ELT-2026-000412-01': [{
+      field: 'house.people_per_room', label: 'Человек в комнате',
+      what: 'В таблице указано 4, в заявке заказчика — 6. Выберите актуальное значение.',
+      values: [{ src: 'Таблица Аметист · 12 августа', v: '4' }, { src: 'Заявка заказчика · 13 августа', v: '6' }],
+      recommend: 'Обычно верна более поздняя заявка заказчика'
+    }]
+  };
+
+  FORMATS = {
+    'ELT-2026-000445-03': [{
+      field: 'rate.shift', label: 'Ставка кандидата',
+      what: 'В одном поле ставка за час, ставка за смену и условие стажировки.',
+      raw: '320 р/час — 3520 р/смена (первые 3 смены, далее %)',
+      recommend: 'Оставьте в ставке только сумму за смену, стажировку вынесите отдельно'
+    }]
+  };
+
+  UNPARSED = {
+    'ELT-2026-000452-01': [{
+      field: 'start_date', label: 'Дата начала',
+      what: 'Строку «Выход в течение 2 дней» не удалось привести к дате.',
+      raw: 'Выход в течение 2 дней',
+      recommend: 'Укажите дату или отметьте, что её нет в источнике'
+    }]
+  };
+
+  DUPES = { 'ELT-2026-000473-01': 'ELT-2026-000412-01', 'ELT-2026-000412-01': 'ELT-2026-000473-01' };
+
+  MAX_TRIES = 3;
+  SEND_TIME = '09:00';
+
+  // Два обозначения заявки: внутреннее (наше) и то, как она названа у контрагента.
+  // Наружу уходит только название контрагента и его номер.
+  CP_TITLES = {
+    'ELT-2026-000466-01': { t: 'Оператор погрузчика на склад', ref: 'АМ-114' },
+    'ELT-2026-000418-02': { t: 'Разнорабочий на производство', ref: '' },
+    'ELT-2026-000455-02': { t: 'Грузчик на склад', ref: 'МС-77' },
+    'ELT-2026-000412-01': { t: 'Комплектовщик', ref: 'АМ-120' },
+    'ELT-2026-000473-01': { t: 'Комплектовщик Чехов', ref: 'ВП-091' },
+    'ELT-2026-000445-03': { t: 'Комплектовщик СПК', ref: 'ВП-071' },
+    'ELT-2026-000447-01': { t: 'Сборщик заказов', ref: 'АМ-128' },
+    'ELT-2026-000431-01': { t: 'Работник линии', ref: '' },
+    'ELT-2026-000461-01': { t: 'Кладовщик РЦ', ref: 'ВП-080' },
+    'ELT-2026-000452-01': { t: 'Упаковщица РЦ', ref: 'МС-118' },
+    'ELT-2026-000470-02': { t: 'Фасовщица', ref: 'ВП-086' }
+  };
+
+  // Состояние переписки: одно сообщение на контрагента, приветствие — раз в день на чат.
+  OUTREACH = {
+    'Лента': { attempt: 3, sent: '11 августа 09:00', silent: 3, greetedToday: false, asked: ['гражданство', 'питание', 'выплаты'] },
+    'Все инструменты': { attempt: 1, sent: 'сегодня 09:00', silent: 0, greetedToday: true, asked: ['питание'] },
+    'Миксит': { attempt: 2, sent: 'вчера 09:00', silent: 1, greetedToday: false, asked: ['питание'] },
+    'БИГ': { attempt: 1, sent: 'сегодня 09:00', silent: 0, greetedToday: true, asked: [] }
+  };
+
+  // Рабочие настройки живут в системе, а не в коде. Токен хранится в защищённом хранилище и в GitHub не попадает.
+  FIELD_KEYS = [
+    { k: 'cits', t: 'Гражданство' }, { k: 'house', t: 'Проживание' }, { k: 'meals', t: 'Питание' },
+    { k: 'pay', t: 'Выплаты' }, { k: 'rate', t: 'Ставка' }, { k: 'sched', t: 'График' }, { k: 'need', t: 'Потребность' }
+  ];
+
+  CPS = [
+    { id: 'CP-01', name: 'ФМ Логистик', alias: 'Федеральный логистический оператор', kind: 'Telegram-чат', address: '@ametist_vahta', times: '12:00',
+      required: ['cits', 'house', 'meals', 'pay', 'rate'], contact: 'Ирина Соколова · +7 903 000-11-22',
+      bot: '@eltera_navigator_bot', token: '7841…AAH', chat: '-1001998877665', thread: '128',
+      sendTime: '09:00', tpl: 'Добрый день! В заявках {позиции} отсутствует следующая информация: {поля}. Пожалуйста, дополните данные.',
+      delivery: 'доставлено сегодня 09:00', deliveryOk: true },
+    { id: 'CP-02', name: 'КПК', alias: 'Федеральное пищевое производство', kind: 'Google-таблица', address: 'docs.google.com/spreadsheets/…/kpk-vahta', times: '12:00',
+      required: ['cits', 'house', 'meals', 'pay'], contact: 'Дмитрий Волков · +7 916 220-40-51',
+      bot: '@eltera_navigator_bot', token: '7841…AAH', chat: '-1002114455990', thread: '',
+      sendTime: '10:00', tpl: 'Добрый день! В заявках {позиции} отсутствует следующая информация: {поля}. Пожалуйста, дополните данные.',
+      delivery: 'доставлено сегодня 10:00', deliveryOk: true },
+    { id: 'CP-03', name: 'Озон', alias: 'Федеральный маркетплейс', kind: 'Google-таблица', address: 'docs.google.com/spreadsheets/…/zayavki', times: '13:00',
+      required: ['cits', 'house', 'meals', 'pay'], contact: 'Мария Кузьмина · +7 985 771-09-14',
+      bot: '@eltera_navigator_bot', token: '7841…AAH', chat: '-1001556677889', thread: '',
+      sendTime: '09:00', tpl: 'Добрый день! В заявках {позиции} отсутствует следующая информация: {поля}. Пожалуйста, дополните данные.',
+      delivery: 'доставлено сегодня 09:00', deliveryOk: true },
+    { id: 'CP-04', name: 'Все инструменты', alias: 'Федеральный онлайн-ритейлер', kind: 'Telegram-чат', address: '@vahtapro_zayavki', times: '12:00, 13:00',
+      required: ['cits', 'house', 'meals', 'pay'], contact: 'Сергей Липатов · +7 926 145-77-30',
+      bot: '@eltera_navigator_bot', token: '7841…AAH', chat: '-1001334455221', thread: '42',
+      sendTime: '09:00', tpl: 'Добрый день! В заявках {позиции} отсутствует следующая информация: {поля}. Пожалуйста, дополните данные.',
+      delivery: 'доставлено сегодня 09:00', deliveryOk: true },
+    { id: 'CP-05', name: 'Лента', alias: 'Федеральный продуктовый ритейлер', kind: 'Google-таблица', address: 'docs.google.com/spreadsheets/…/lenta', times: '13:00',
+      required: ['cits', 'house', 'meals', 'pay'], contact: 'Ольга Прохорова · +7 921 300-18-04',
+      bot: '@eltera_navigator_bot', token: '7841…AAH', chat: '-1001889900112', thread: '',
+      sendTime: '09:00', tpl: 'Добрый день! В заявках {позиции} отсутствует следующая информация: {поля}. Пожалуйста, дополните данные.',
+      delivery: 'доставлено 11 августа 09:00 · ответа нет', deliveryOk: true },
+    { id: 'CP-06', name: 'Миксит', alias: 'Производитель бытовой химии', kind: 'Telegram-чат', address: '@vahtapro_zayavki', times: '13:00',
+      required: ['cits', 'house', 'meals', 'pay'], contact: 'Анна Гречко · +7 903 512-66-71',
+      bot: '@eltera_navigator_bot', token: '7841…AAH', chat: '-1002001122334', thread: '17',
+      sendTime: '11:00', tpl: 'Добрый день! В заявках {позиции} отсутствует следующая информация: {поля}. Пожалуйста, дополните данные.',
+      delivery: 'не доставлено — бот удалён из чата', deliveryOk: false },
+    { id: 'CP-07', name: 'БИГ', alias: 'Российский производитель косметики', kind: 'Telegram-чат', address: '@ametist_vahta', times: '12:00',
+      required: ['cits', 'house', 'meals', 'pay'], contact: 'Павел Ерохин · +7 915 808-23-96',
+      bot: '@eltera_navigator_bot', token: '7841…AAH', chat: '-1001445566778', thread: '',
+      sendTime: '09:00', tpl: 'Добрый день! В заявках {позиции} отсутствует следующая информация: {поля}. Пожалуйста, дополните данные.',
+      delivery: 'доставлено сегодня 09:00', deliveryOk: true }
+  ];
+
+  SOURCES = [
+    { id: 'SRC-01', cp: 'Аметист', kind: 'Telegram-чат', address: '@ametist_vahta', times: '12:00', last: 'сегодня 12:04', status: 'ok', pos: 4 },
+    { id: 'SRC-02', cp: 'Маркетстафф', kind: 'Google-таблица', address: 'docs.google.com/spreadsheets/…/zayavki', times: '13:00', last: 'сегодня 13:02', status: 'ok', pos: 2 },
+    { id: 'SRC-03', cp: 'ВахтаПро', kind: 'Telegram-чат', address: '@vahtapro_zayavki', times: '12:00, 13:00', last: 'сегодня 13:02', status: 'ok', pos: 4 },
+    { id: 'SRC-04', cp: 'КПК', kind: 'Google-таблица', address: 'docs.google.com/spreadsheets/…/kpk-vahta', times: '12:00', last: 'сегодня 12:04', status: 'error', pos: 1, error: 'доступ к таблице отозван' }
+  ];
+
+  GITHUB = { repo: 'roknyaz17/eltera-navigator', branch: 'main', file: 'config/sources.yml', synced: 'синхронизировано сегодня 12:58' };
+
+  LINK_STATE = {
+    'ELT-2026-000418-02|route': { status: 'запрошена новая ссылка', dot: '#D9A441', meta: 'недоступна с 2 августа · перепроверок 24 · запрос заказчику отправлен вчера' },
+    'ELT-2026-000461-01|housing_photo': { status: 'перепроверяется', dot: '#16D7FF', meta: 'недоступна с 28 июля · перепроверка каждые 6 часов · последняя сегодня 12:00' }
+  };
+
+  MEDIA_META = {
+    housing_photo: { label: 'Фото проживания', icon: 'M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z', emoji: '🏠', text: 'Фото проживания' },
+    object_photo: { label: 'Фото объекта', icon: 'M3 5h18v14H3zM8.5 10.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM21 16l-5-5-7 8', emoji: '📷', text: 'Фото рабочего объекта' },
+    video: { label: 'Видео', icon: 'M10 8.5v7l6-3.5zM3 5h18v14H3z', emoji: '🎬', text: 'Видео' },
+    telegram: { label: 'Telegram', icon: 'M22 3 2 10.5l6 2.2L20 6l-9 8.2V21l3.5-4.2L20 19z', emoji: '📲', text: 'Telegram-канал с информацией' },
+    route: { label: 'Маршрут', icon: 'M12 21s7-6.3 7-11a7 7 0 1 0-14 0c0 4.7 7 11 7 11zM12 12a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z', emoji: '📍', text: 'Маршрут до объекта' }
+  };
+
+  ALIASES = [
+    { kind: 'Должности', from: 'Комплектовщик СПК', to: 'Комплектовщик', hits: 'встречено 14 раз' },
+    { kind: 'Категории', from: 'пищевое производство', to: 'Производство продуктов', hits: 'встречено 9 раз' }
+  ];
+
+  componentDidMount() {
+    const r = this.props.radiusDefault;
+    if (r) this.setState({ radius: r });
+    this._esc = (e) => {
+      if (e.key !== 'Escape') return;
+      const s = this.state;
+      if (s.authOpen) this.setState({ authOpen: false, authPass: '', authErr: false });
+      else if (s.cpDelete) this.setState({ cpDelete: null, delPass: '', delErr: false });
+      else if (s.cpMenu) this.setState({ cpMenu: null });
+      else if (s.cpEdit) this.setState({ cpEdit: null });
+      else if (s.modal) this.setState({ modal: null, copied: false });
+      else if (s.gaps) this.setState({ gaps: null });
+      else if (s.detail) this.setState({ detail: null });
+    };
+    document.addEventListener('keydown', this._esc);
+    setTimeout(() => {
+      const v = document.querySelector('video[src*="codenest_background"]');
+      if (!v) return;
+      v.muted = true; v.loop = true; v.playsInline = true;
+      const p = v.play(); if (p && p.catch) p.catch(() => {});
+    }, 0);
+  }
+
+  _listRef = React.createRef();
+
+  componentDidUpdate(prevProps, prevState) {
+    const keys = ['sel', 'radius', 'q', 'rateMin', 'ageCand', 'fRec', 'fHouse', 'fMeals', 'fCit', 'fGender', 'fMed', 'fSb', 'fSched', 'fPay', 'scope', 'sort'];
+    const changed = keys.some((k) => (k === 'sel' ? prevState[k].join() !== this.state[k].join() : prevState[k] !== this.state[k]));
+    if (changed && this._listRef.current) this._listRef.current.scrollTop = 0;
+  }
+
+  componentWillUnmount() {
+    document.removeEventListener('keydown', this._esc);
+    if (this._t) clearTimeout(this._t);
+  }
+
+  _toast(text) {
+    this.setState({ toast: text });
+    if (this._t) clearTimeout(this._t);
+    this._t = setTimeout(() => this.setState({ toast: '' }), 2400);
+  }
+
+  _dist(a, b) {
+    const R = 6371, rad = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
+    const s = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+    return Math.round(2 * R * Math.asin(Math.sqrt(s)));
+  }
+
+  _city(name) { return this.CITIES.find((c) => c.name === name); }
+
+  _nearNames() {
+    const s = this.state;
+    if (!s.radius || !s.sel.length) return [];
+    const anchors = s.sel.map((n) => this._city(n)).filter(Boolean);
+    return this.CITIES
+      .filter((c) => s.sel.indexOf(c.name) < 0)
+      .filter((c) => anchors.some((a) => this._dist(a, c) <= s.radius))
+      .map((c) => c.name);
+  }
+
+  _money(n) { return n ? String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' ₽' : ''; }
+
+  _need(r) {
+    const p = [];
+    if (r.m) p.push(r.m + ' муж');
+    if (r.w) p.push(r.w + ' жен');
+    if (r.c) p.push(r.c + ' пар');
+    return p.join(' · ');
+  }
+
+  _needTotal(r) { return (r.m || 0) + (r.w || 0) + (r.c || 0) * 2; }
+
+  _rec(r) { return this.RECRUITER_RATES[r.cp] || null; }
+
+  // Процент считается от сдельной оплаты контрагента (таблица мотивации), а не от ставки кандидата.
+  _recAmount(m) {
+    if (!m) return 0;
+    if (m.kind === 'fixed') return m.value;
+    return m.baseAmount ? Math.round(m.baseAmount * m.value / 100) : 0;
+  }
+
+  _recText(r) {
+    const m = this._rec(r);
+    if (!m) return '';
+    const amt = this._recAmount(m);
+    return amt ? this._money(amt) : m.value + '% — база не задана';
+  }
+
+  _recFormula(m) {
+    if (!m) return '';
+    if (m.kind === 'fixed') return m.base;
+    if (!m.baseAmount) return m.value + '% — база в таблице не задана';
+    return m.value + '% от ' + this._money(m.baseAmount) + ' за кандидата';
+  }
+
+  _ageText(r) {
+    if (r.ageFrom && r.ageTo) return r.ageFrom + '–' + r.ageTo;
+    if (r.ageTo) return 'до ' + r.ageTo;
+    if (r.ageFrom) return 'от ' + r.ageFrom;
+    return '';
+  }
+
+  _houseText(r) {
+    const h = r.house;
+    if (h.st === 'no') return 'Не предоставляется';
+    if (h.st === 'na') return '';
+    const per = h.per ? h.per + ' человека в комнате' : 'до 10 человек в комнате';
+    const cost = h.cost === 'free' ? 'Бесплатно' : (h.cost === 'deduct' ? 'С удержанием' : 'Платно');
+    return cost + ', ' + (h.type || 'общежитие') + ', ' + per;
+  }
+
+  _houseState(r) {
+    const h = r.house;
+    if (h.st === 'na') return 'na';
+    if (h.st === 'no') return 'no';
+    return h.per ? 'yes' : 'def';
+  }
+
+  _mealsText(r) {
+    const m = r.meals;
+    if (m.st === 'na') return '';
+    if (m.st === 'no') return 'Не предоставляется';
+    if (m.st === 'paid') return 'Платная столовая' + (m.note ? ' — ' + m.note : '');
+    if (m.st === 'deduct') return 'Есть, с удержанием' + (m.times ? ', ' + m.times + ' раза в смену' : '');
+    return 'Бесплатно' + (m.times ? ', ' + m.times + ' раз в смену' : '');
+  }
+
+  _travelText(r) {
+    const t = r.travel;
+    if (t.st !== 'yes') return '';
+    const p = [t.full === 'full' ? 'Компенсируется полностью' : 'Частичная компенсация'];
+    if (t.amount) p.push(t.amount);
+    if (t.route) p.push(t.route);
+    if (t.when) p.push(t.when);
+    return p.join(', ');
+  }
+
+  _payText(r) {
+    const p = r.pay;
+    if (p.st !== 'yes') return '';
+    let out = p.freq;
+    if (p.advance === 'yes') out += ', аванс' + (p.advAfter ? ' после ' + p.advAfter + ' смен' : '');
+    if (p.advance === 'no') out += ', без аванса';
+    return out;
+  }
+
+  _dedLine(d) {
+    const unit = d.unit === 'shift' ? 'за смену' : (d.unit === 'day' ? 'в день' : (d.unit === 'month' ? 'в месяц' : 'единоразово'));
+    return d.basis + ' — ' + this._money(d.amount) + ' ' + unit;
+  }
+
+  _medText(r) {
+    if (r.med === 'no') return 'Не нужна';
+    if (r.med === 'need') return 'Нужна, выход только с ней';
+    if (r.med === 'arranged') return 'Нужна, оформляем — 2 800 ₽';
+    return '';
+  }
+
+  _sbText(r) {
+    if (r.sb === 'none') return 'Нет';
+    if (r.sb === 'part') return 'Выборочная';
+    if (r.sb === 'full') return 'Полная';
+    return '';
+  }
+
+  _testText(r) {
+    if (r.test === 'yes') return 'Требуется';
+    if (r.test === 'no') return 'Не требуется';
+    return '';
+  }
+
+  _mediaList(r) {
+    const seen = {}, out = [];
+    (r.media || []).forEach((m) => {
+      const key = m.kind + '|' + m.url.toLowerCase().replace(/\?.*$/, '');
+      if (seen[key]) return;
+      seen[key] = 1;
+      if (m.kind === 'housing_photo' && r.house.st !== 'yes') return;
+      out.push(m);
+    });
+    return out;
+  }
+
+  // Очередь администратора: только реальные исключения. Пустое необязательное поле — «Не указано», не ошибка.
+  _issues(r) {
+    const out = [];
+    const done = (code, field) => !!this.state.fixes[r.id + '|' + code + '|' + field];
+    const add = (o) => { if (!done(o.code, o.field)) out.push(Object.assign({ id: r.id + '|' + o.code + '|' + o.field, row: r.id, values: [], sev: this.ISSUE_KINDS[o.code].sev, dot: this.ISSUE_KINDS[o.code].dot, status: this.ISSUE_KINDS[o.code].label }, o)); };
+
+    (this.CONFLICTS[r.id] || []).forEach((c) => add({ code: 'conflict', field: c.field, label: c.label, what: c.what, values: c.values, recommend: c.recommend, choice: true }));
+
+    if (this.DUPES[r.id]) add({
+      code: 'duplicate', field: 'position', label: 'Дубль позиции',
+      what: 'Та же связка контрагент + объект + должность пришла из двух источников: ' + r.src + ' и второго канала.',
+      values: [{ src: r.id, v: r.src }, { src: this.DUPES[r.id], v: 'второй источник' }],
+      recommend: 'Объединить, если это одна потребность', dup: true, dupWith: this.DUPES[r.id]
+    });
+
+    if (!r.cits.length) add({ code: 'missing', field: 'citizenship', label: this.REQUIRED.cits, what: 'Обязательное поле пустое. Подставлять гражданство по прошлым заявкам контрагента нельзя.', recommend: 'Запросить у заказчика или отметить «нет в источнике»', input: true });
+    if (r.house.st === 'na') add({ code: 'missing', field: 'housing', label: this.REQUIRED.house, what: 'Не указано, предоставляется ли проживание.', recommend: 'Уточнить: есть / нет / условия', input: true });
+    if (r.meals.st === 'na') add({ code: 'missing', field: 'meals', label: this.REQUIRED.meals, what: 'Не указано, есть ли питание.', recommend: 'Уточнить у заказчика', input: true });
+    if (r.pay.st !== 'yes') add({ code: 'missing', field: 'payouts', label: this.REQUIRED.pay, what: 'Периодичность выплат не указана — самый частый вопрос кандидата.', recommend: 'Уточнить периодичность', input: true });
+
+    if (this._houseState(r) === 'def') add({
+      code: 'format', field: 'house.people_per_room', label: 'Человек в комнате',
+      what: 'Проживание подтверждено, число человек не указано — подставлено системное правило «до 10».',
+      values: [{ src: 'системное правило', v: 'до 10' }],
+      recommend: 'Подтвердить или заменить фактическим числом', input: true
+    });
+
+    (this.FORMATS[r.id] || []).forEach((f) => add({ code: 'format', field: f.field, label: f.label, what: f.what, values: [{ src: 'как пришло', v: f.raw }], recommend: f.recommend, input: true }));
+    (this.UNPARSED[r.id] || []).forEach((f) => add({ code: 'unparsed', field: f.field, label: f.label, what: f.what, values: [{ src: 'как пришло', v: f.raw }], recommend: f.recommend, input: true }));
+
+    (r.media || []).forEach((m, i) => {
+      if (m.alive) return;
+      add({
+        code: 'source', field: 'media.' + m.kind, label: this.MEDIA_META[m.kind].label,
+        what: 'Ссылка не открывается с ' + m.upd + '. Кандидату такой материал не отправляем.',
+        values: [{ src: m.src, v: m.url }],
+        recommend: 'Заменить ссылку или убрать материал', link: m.url, media: true
+      });
+    });
+
+    return out.sort((a, b) => a.sev - b.sev);
+  }
+
+  _rowStatus(r) {
+    const iss = this._issues(r);
+    if (iss.length) return { label: iss[0].status, dot: iss[0].dot, open: true };
+    const touched = Object.keys(this.state.fixes).some((k) => k.indexOf(r.id + '|') === 0);
+    return touched ? { label: 'Исправлено', dot: '#6EE7C1', open: false } : { label: 'Принято автоматически', dot: '#6EE7C1', open: false };
+  }
+
+  _resolve(iss, action, value) {
+    const fixes = Object.assign({}, this.state.fixes);
+    fixes[iss.row + '|' + iss.code + '|' + iss.field] = { action: action, value: value || '', at: 'сегодня ' + new Date().toTimeString().slice(0, 5), by: 'Кузнецова' };
+    const log = [{
+      row: iss.row, field: iss.label, code: iss.code, action: action, value: value || '',
+      at: new Date().toTimeString().slice(0, 5), by: 'Кузнецова'
+    }].concat(this.state.log).slice(0, 40);
+    const drafts = Object.assign({}, this.state.drafts); delete drafts[iss.id];
+    this.setState({ fixes: fixes, log: log, drafts: drafts });
+    const row = this.ROWS.find((x) => x.id === iss.row);
+    const left = row ? this._issues(row).filter((x) => x.id !== iss.id).length : 0;
+    this._toast(left ? 'Исправлено · перепроверка: осталось ' + left : 'Исправлено · перепроверка пройдена, заявка ушла из очереди');
+  }
+
+  ADMIN_PASS = '1207';
+  AUTH_KEY = 'eltera_navigator_admin_v1';
+
+  _authed() {
+    if (this.state.authOk) return true;
+    try { return localStorage.getItem(this.AUTH_KEY) === 'ok'; } catch (e) { return false; }
+  }
+
+  _openAdmin() {
+    if (this._authed()) { this.setState({ screen: 'norm' }); return; }
+    this.setState({ authOpen: true, authPass: '', authErr: false });
+  }
+
+  _submitAuth() {
+    if (this.state.authPass.trim() !== this.ADMIN_PASS) { this.setState({ authErr: true }); return; }
+    try { localStorage.setItem(this.AUTH_KEY, 'ok'); } catch (e) {}
+    this.setState({ authOk: true, authOpen: false, authPass: '', authErr: false, screen: 'norm' });
+    this._toast('Вход выполнен — устройство запомнено');
+  }
+
+  _cp(name) {
+    return this.CPS.find((c) => c.name === name) || {
+      id: 'CP-НОВ', name: name, alias: '', kind: 'не настроен', address: '', times: '',
+      required: ['cits', 'house', 'meals', 'pay'], contact: '', bot: '', token: '', chat: '', thread: '',
+      sendTime: this.SEND_TIME, tpl: 'Добрый день! В заявках {позиции} отсутствует следующая информация: {поля}. Пожалуйста, дополните данные.',
+      delivery: 'чат не настроен', deliveryOk: false
+    };
+  }
+
+  _extTitle(r) { return this.CP_TITLES[r.id] || { t: r.prof, ref: '' }; }
+
+  // Конкретный вопрос вместо догадки. Значения робот не придумывает.
+  _question(i) {
+    if (i.field === 'house.people_per_room') return 'сколько человек в комнате?';
+    if (i.field === 'rate.shift') return 'какая ставка за смену действует после стажировки и сколько смен она длится?';
+    if (i.field === 'start_date') return 'с какого числа фактически нужен выход?';
+    return i.recommend ? i.recommend.toLowerCase() + '?' : 'уточните, пожалуйста';
+  }
+
+  _line(it) {
+    const head = '«' + it.title + '»' + (it.ref ? ' (№ ' + it.ref + ')' : '');
+    return head + ' — отсутствуют: ' + it.fields.join(', ') + '.';
+  }
+
+  _outreachText(items, greet) {
+    const L = [];
+    L.push((greet ? 'Добрый день! ' : '') + 'Просьба дополнить информацию по следующим заявкам:');
+    L.push('');
+    items.filter((it) => it.fields.length).forEach((it) => L.push(this._line(it)));
+    const qs = items.filter((it) => it.questions.length);
+    if (qs.length) {
+      L.push('');
+      qs.forEach((it) => it.questions.forEach((q) => L.push('«' + it.title + '»: ' + q)));
+    }
+    return L.join('\n');
+  }
+
+  _openCp(cp) { this.setState({ cpEdit: Object.assign({}, cp, { required: cp.required.slice() }) }); }
+
+  _setCp(key, value) {
+    const d = Object.assign({}, this.state.cpEdit); d[key] = value;
+    this.setState({ cpEdit: d });
+  }
+
+  _toggleReq(key) {
+    const d = Object.assign({}, this.state.cpEdit);
+    d.required = d.required.indexOf(key) >= 0 ? d.required.filter((x) => x !== key) : d.required.concat([key]);
+    this.setState({ cpEdit: d });
+  }
+
+  _cpMenu(id) { this.setState({ cpMenu: this.state.cpMenu === id ? null : id }); }
+
+  _cpExclude(cp) {
+    const i = this.CPS.findIndex((c) => c.id === cp.id);
+    if (i < 0) return;
+    this.CPS[i] = Object.assign({}, this.CPS[i], { excluded: !this.CPS[i].excluded });
+    this.setState({ cpMenu: null });
+    this._toast(this.CPS[i].excluded
+      ? cp.name + ' исключён — приём данных и сообщения остановлены, можно восстановить'
+      : cp.name + ' снова в работе');
+  }
+
+  _cpAskDelete(cp) { this.setState({ cpMenu: null, cpDelete: cp, delPass: '', delErr: false }); }
+
+  _cpConfirmDelete() {
+    if (this.state.delPass.trim() !== this.ADMIN_PASS) { this.setState({ delErr: true }); return; }
+    const cp = this.state.cpDelete;
+    const linked = this.ROWS.filter((r) => r.cp === cp.name).length > 0 || !!this.OUTREACH[cp.name];
+    const i = this.CPS.findIndex((c) => c.id === cp.id);
+    if (linked) {
+      if (i >= 0) this.CPS[i] = Object.assign({}, this.CPS[i], { archived: true, excluded: true });
+      this._toast('С контрагентом связаны заявки и переписка — перенесён в архив, связи сохранены');
+    } else {
+      if (i >= 0) this.CPS = this.CPS.filter((c) => c.id !== cp.id);
+      this._toast('Контрагент удалён');
+    }
+    this.setState({ cpDelete: null, delPass: '', delErr: false });
+  }
+
+  _cpRestore(cp) {
+    const i = this.CPS.findIndex((c) => c.id === cp.id);
+    if (i >= 0) this.CPS[i] = Object.assign({}, this.CPS[i], { archived: false, excluded: false });
+    this.setState({ cpMenu: null });
+    this._toast(cp.name + ' восстановлен из архива');
+  }
+
+  _saveCp() {
+    const d = this.state.cpEdit;
+    const i = this.CPS.findIndex((c) => c.id === d.id);
+    if (i >= 0) this.CPS[i] = Object.assign({}, d); else this.CPS = this.CPS.concat([Object.assign({}, d, { id: 'CP-' + (this.CPS.length + 1) })]);
+    this.setState({ cpEdit: null });
+    this._toast('Настройки сохранены — контрагент включён в подбор и автопроверку');
+  }
+
+  _bulkDeadLinks() {
+    const fixes = Object.assign({}, this.state.fixes);
+    let n = 0, log = this.state.log.slice();
+    this.ROWS.forEach((r) => this._issues(r).forEach((i) => {
+      if (i.code !== 'source') return;
+      fixes[i.row + '|' + i.code + '|' + i.field] = { action: 'Материал убран', value: '', at: 'сегодня', by: 'Кузнецова' };
+      log = [{ row: i.row, field: i.label, code: i.code, action: 'Материал убран (массово)', value: '', at: new Date().toTimeString().slice(0, 5), by: 'Кузнецова' }].concat(log);
+      n++;
+    }));
+    this.setState({ fixes: fixes, log: log.slice(0, 40) });
+    this._toast(n ? 'Убрано битых ссылок: ' + n : 'Битых ссылок нет');
+  }
+
+  _scrub(text, r) {
+    const bad = [r.cp, r.obj, r.src].filter(Boolean);
+    let out = text, hit = [];
+    bad.forEach((b) => {
+      const re = new RegExp(b.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      if (re.test(out)) { hit.push(b); out = out.replace(re, '———'); }
+    });
+    return { text: out, removed: hit };
+  }
+
+  _employer(r) {
+    const mode = this.props.employerDisplay || 'alias';
+    if (mode === 'type') return r.cpType;
+    if (mode === 'geo') return [r.city, r.district].filter(Boolean).join(', ');
+    if (mode === 'none') return r.sched;
+    return r.cpAlias;
+  }
+
+  // §11 — только подтверждённое, без внутреннего, в заданном порядке.
+  _candidateText(r, picked) {
+    const L = [];
+    L.push(r.prof + ' на ' + this._employer(r).toLowerCase() + ', ' + [r.city, r.district].filter(Boolean).join(', ') + '.');
+
+    const rate = [];
+    rate.push('Ставка — ' + this._money(r.rate) + ' за смену');
+    if (r.hourly) rate.push(r.hourly + ' ₽ в час');
+    rate.push('график ' + r.sched.replace(/ по .*$/, ''));
+    if (r.hours) rate.push('смена ' + r.hours + ' часов');
+    L.push(rate.join(', ') + '.');
+
+    const req = [];
+    if (r.gender) req.push(r.gender === 'любые' ? 'мужчины и женщины' : r.gender);
+    const age = this._ageText(r);
+    if (age) req.push(age === 'до ' + r.ageTo ? 'до ' + r.ageTo + ' лет' : age + ' лет');
+    if (r.cits.length) req.push('гражданство ' + r.cits.join(', '));
+    if (req.length) L.push('Требуются ' + req.join(', ') + '.');
+    if (r.req) L.push(r.req.charAt(0).toUpperCase() + r.req.slice(1) + '.');
+
+    if (r.house.st === 'yes') {
+      const h = r.house, parts = [];
+      parts.push(h.cost === 'free' ? 'Проживание бесплатное' : (h.cost === 'deduct' ? 'Проживание с удержанием' : 'Проживание платное'));
+      if (h.per) parts.push(h.per + ' человека в комнате');
+      if (h.linen) parts.push('постельное бельё выдаётся');
+      if (h.transfer) parts.push(h.transfer);
+      L.push(parts.join(', ') + '.');
+    } else if (r.house.st === 'no') {
+      L.push('Проживание не предоставляется.');
+    }
+
+    const meals = this._mealsText(r);
+    if (meals) L.push('Питание: ' + meals.charAt(0).toLowerCase() + meals.slice(1) + '.');
+
+    const payParts = [];
+    const pay = this._payText(r);
+    if (pay) payParts.push('Выплаты ' + pay.charAt(0).toLowerCase() + pay.slice(1));
+    if (r.dedSt === 'yes') payParts.push('удержания: ' + r.ded.map((d) => this._dedLine(d).toLowerCase()).join('; '));
+    if (r.dedSt === 'no') payParts.push('удержаний нет');
+    if (payParts.length) L.push(payParts.join('. ') + '.');
+
+    const tr = this._travelText(r);
+    if (tr) L.push('Проезд: ' + tr.charAt(0).toLowerCase() + tr.slice(1) + '.');
+    else if (r.travel.st === 'no') L.push('Проезд не компенсируется.');
+
+    const check = [];
+    const med = this._medText(r); if (med) check.push('медкнижка — ' + med.toLowerCase());
+    const sb = this._sbText(r); if (sb) check.push('проверка СБ — ' + sb.toLowerCase());
+    const test = this._testText(r); if (test) check.push('тестирование — ' + test.toLowerCase());
+    if (check.length) L.push(check.join(', ').replace(/^./, (c) => c.toUpperCase()) + '.');
+
+    L.push('Если подходит — напишите, забронирую место и пришлю порядок выхода.');
+
+    const links = this._mediaList(r).filter((m) => m.vis === 'public' && m.alive && picked[r.id + '|' + m.kind]);
+    if (links.length) {
+      L.push('');
+      L.push('Подробнее:');
+      links.forEach((m) => {
+        const meta = this.MEDIA_META[m.kind];
+        L.push(meta.emoji + ' ' + meta.text + ': ' + m.url);
+      });
+    }
+
+    return this._scrub(L.join('\n'), r);
+  }
+
+  _passAge(r, age) {
+    if (!age) return true;
+    const a = Number(age);
+    if (r.ageFrom && a < r.ageFrom) return false;
+    if (r.ageTo && a > r.ageTo) return false;
+    return true;
+  }
+
+  _pass(r) {
+    const s = this.state;
+    const allow = s.sel.length ? s.sel.concat(this._nearNames()) : null;
+    if (allow && allow.indexOf(r.city) < 0) return false;
+    if (s.rateMin && r.rate < Number(s.rateMin)) return false;
+
+    const m = this._rec(r);
+    if (s.fRec === 'percent' && (!m || m.kind !== 'percent')) return false;
+    if (s.fRec === 'fixed' && (!m || m.kind !== 'fixed')) return false;
+    if (s.fRec === 'none' && m) return false;
+    if (s.recPct && (!m || m.kind !== 'percent' || m.value < Number(s.recPct))) return false;
+
+    if (s.fHouse === 'yes' && r.house.st !== 'yes') return false;
+    if (s.fHouse === 'free' && !(r.house.st === 'yes' && r.house.cost === 'free')) return false;
+    if (s.fHouse === 'no' && r.house.st !== 'no') return false;
+
+    if (s.fMeals === 'yes' && ['free', 'deduct', 'paid'].indexOf(r.meals.st) < 0) return false;
+    if (s.fMeals === 'free' && r.meals.st !== 'free') return false;
+    if (s.fMeals === 'no' && r.meals.st !== 'no') return false;
+
+    if (s.fCit) {
+      if (!r.cits.length) return false;
+      if (s.fCit === 'ЕАЭС') { if (r.cits.indexOf('ЕАЭС') < 0 && r.cits.indexOf('КЗ') < 0) return false; }
+      else if (s.fCit === 'РФ + РБ') { if (r.cits.indexOf('РБ') < 0) return false; }
+      else if (r.cits.indexOf(s.fCit) < 0) return false;
+    }
+
+    if (s.fGender === 'мужчины' && !(r.gender === 'мужчины' || r.gender === 'любые')) return false;
+    if (s.fGender === 'женщины' && !(r.gender === 'женщины' || r.gender === 'любые')) return false;
+    if (s.fGender === 'пары' && !r.c) return false;
+
+    if (!this._passAge(r, s.ageCand)) return false;
+
+    if (s.fMed === 'no' && r.med !== 'no') return false;
+    if (s.fMed === 'arranged' && ['no', 'arranged'].indexOf(r.med) < 0) return false;
+
+    if (s.fSb === 'none' && r.sb !== 'none') return false;
+    if (s.fSb === 'notfull' && r.sb === 'full') return false;
+
+    if (s.fSched && r.schedKind !== s.fSched) return false;
+
+    if (s.fPay === 'weekly' && r.pay.freq !== 'еженедельно') return false;
+    if (s.fPay === 'biweekly' && r.pay.freq !== '2 раза в месяц') return false;
+    if (s.fPay === 'advance' && r.pay.advance !== 'yes') return false;
+
+    if (s.scope === 'req' && !/комплектов|сборщик/i.test(r.prof)) return false;
+    if (s.scope === 'gaps' && this._gapList(r).length === 0) return false;
+
+    if (s.q) {
+      const hay = [r.prof, r.req, r.cp, r.obj, r.city, r.district, r.cits.join(' '), r.sched, r.src].join(' ').toLowerCase().replace(/ё/g, 'е');
+      const toks = s.q.toLowerCase().replace(/ё/g, 'е').split(/\s+/).filter(Boolean);
+      if (!toks.every((t) => hay.indexOf(t) >= 0)) return false;
+    }
+    return true;
+  }
+
+  _sorted(rows) {
+    const s = this.state;
+    const anchor = s.sel.length ? this._city(s.sel[0]) : null;
+    const out = rows.slice();
+    if (s.sort === 'need') out.sort((a, b) => this._needTotal(b) - this._needTotal(a));
+    else if (s.sort === 'fresh') out.sort((a, b) => String(a.seen).localeCompare(String(b.seen)));
+    else if (s.sort === 'dist' && anchor) out.sort((a, b) => this._dist(anchor, this._city(a.city)) - this._dist(anchor, this._city(b.city)));
+    else if (s.sort === 'rec') out.sort((a, b) => {
+      const ma = this._rec(a), mb = this._rec(b);
+      const rank = (m) => (!m ? 0 : (m.kind === 'percent' ? 2 : 1));
+      if (rank(mb) !== rank(ma)) return rank(mb) - rank(ma);
+      return (mb ? mb.value : 0) - (ma ? ma.value : 0);
+    });
+    else out.sort((a, b) => b.rate - a.rate);
+    return out;
+  }
+
+  _field(k, v, st, note) {
+    return { k: k, v: v || note || '', ok: st === 'yes', no: st === 'no', def: st === 'def', conf: st === 'conflict', na: st === 'na' };
+  }
+
+  _normFields(r) {
+    const raws = this.RAWFIELD[r.id] || {};
+    const rows = [
+      ['Должность', r.prof, r.prof ? 'yes' : 'na'],
+      ['Город', r.city, 'yes'],
+      ['Район', r.district, r.district ? 'yes' : 'na'],
+      ['Адрес объекта', r.addr, r.addr ? 'yes' : 'na'],
+      ['Ставка кандидата', this._money(r.rate) + ' за смену' + (r.hourly ? ' · ' + r.hourly + ' ₽/час' : ''), 'yes'],
+      ['Сумма', r.net, r.net ? 'yes' : 'na'],
+      ['График', r.sched, 'yes'],
+      ['Часов в смене', r.hours ? String(r.hours) : '', r.hours ? 'yes' : 'na'],
+      ['Тип смены', r.shiftType, r.shiftType ? 'yes' : 'na'],
+      ['Потребность', this._need(r), this._need(r) ? 'yes' : 'na'],
+      ['Возраст', this._ageText(r), this._ageText(r) ? 'yes' : 'na'],
+      ['Гражданство', r.cits.join(', '), r.conf && r.conf.cits ? 'conflict' : (r.cits.length ? 'yes' : 'na')],
+      ['Проживание', this._houseText(r), this._houseState(r)],
+      ['Питание', this._mealsText(r), r.meals.st === 'na' ? 'na' : (r.meals.st === 'no' ? 'no' : 'yes')],
+      ['Проезд', this._travelText(r) || 'Не компенсируется', r.travel.st === 'na' ? 'na' : (r.travel.st === 'no' ? 'no' : 'yes')],
+      ['Выплаты', this._payText(r), r.pay.st === 'yes' ? 'yes' : 'na'],
+      ['Удержания', r.ded.map((d) => this._dedLine(d)).join('; ') || 'Удержаний нет', r.dedSt === 'na' ? 'na' : (r.dedSt === 'no' ? 'no' : 'yes')],
+      ['Медкнижка', this._medText(r), r.med === 'na' ? 'na' : 'yes'],
+      ['Проверка СБ', this._sbText(r), r.sb === 'na' ? 'na' : 'yes'],
+      ['Тестирование', this._testText(r), r.test === 'na' ? 'na' : 'yes']
+    ];
+    return rows.map((x) => {
+      const f = this._field(x[0], x[1], x[2]);
+      const conflictText = x[2] === 'conflict' && r.conf ? r.conf.cits : '';
+      return {
+        k: f.k, v: conflictText || f.v,
+        ok: f.ok, no: f.no, def: f.def, conflict: f.conf, na: f.na,
+        dict: this.DICT_FIELDS.indexOf(x[0]) >= 0,
+        conf: x[2] === 'na' ? '' : (x[2] === 'def' ? 'правило' : 'источник'),
+        raw: raws[x[0]] || '', hasRaw: !!raws[x[0]]
+      };
+    });
+  }
+
+  renderVals() {
+    const s = this.state;
+    const showInternal = this.props.showInternal !== false;
+    const near = this._nearNames();
+    const searchTerm = s.citySearch.trim().toLowerCase();
+
+    const HOUSE_ICON = 'M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z';
+    const MEAL_ICON = 'M4 3v8a3 3 0 0 0 6 0V3M7 11v10M17 3c-1.7 1.6-2 3-2 5s1 3 2 3 2-1 2-3-.3-3.4-2-5zM17 11v10';
+    const CIT_ICON = 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.5 2.4 3.8 5.4 3.8 9S14.5 18.6 12 21c-2.5-2.4-3.8-5.4-3.8-9S9.5 5.4 12 3z';
+
+    const cityList = this.CITIES
+      .filter((c) => !searchTerm || (c.name + ' ' + c.region).toLowerCase().replace(/ё/g, 'е').indexOf(searchTerm) >= 0)
+      .map((c) => {
+        const on = s.sel.indexOf(c.name) >= 0;
+        const isNear = !on && near.indexOf(c.name) >= 0;
+        const anchor = s.sel.length ? this._city(s.sel[0]) : null;
+        return {
+          name: c.name, region: c.region, on: on, off: !on,
+          near: isNear, nearText: isNear && anchor ? this._dist(anchor, c) + ' км' : '',
+          count: this.ROWS.filter((r) => r.city === c.name).length,
+          toggle: () => this.setState({ sel: on ? s.sel.filter((n) => n !== c.name) : s.sel.concat([c.name]) })
+        };
+      });
+
+    const matched = this.ROWS.filter((r) => this._pass(r));
+    const list = this._sorted(matched).map((r) => {
+      const m = this._rec(r);
+      const gaps = this._issues(r).map((i) => ({ k: i.label, why: i.what, dot: i.dot }));
+      const hState = this._houseState(r);
+      const media = this._mediaList(r).map((x) => {
+        const meta = this.MEDIA_META[x.kind];
+        return {
+          label: meta.label, icon: meta.icon, url: x.url,
+          alive: x.alive && x.vis === 'public', dead: !x.alive,
+          warn: () => this._toast('Ссылка недоступна с ' + x.upd + ' — проверьте источник')
+        };
+      });
+
+      return {
+        id: r.id, prof: r.prof,
+        place: [r.city, r.district].filter(Boolean).join(' · '),
+        objLine: showInternal ? r.obj : this._employer(r),
+
+        recKnown: !!m, recGap: !m,
+        recValue: this._recText(r),
+        recBase: m ? this._recFormula(m) + ' · ' + m.rule : '',
+
+        facts: [
+          this._field('Ставка кандидата', this._money(r.rate) + (r.hourly ? ' · ' + r.hourly + ' ₽/ч' : ''), 'yes'),
+          this._field('График', r.sched, 'yes'),
+          this._field('Смена', r.hours ? r.hours + ' ч' : '', r.hours ? 'yes' : 'na'),
+          this._field('Потребность', this._need(r), this._need(r) ? 'yes' : 'na'),
+          this._field('Обновлено', r.seen, 'yes')
+        ],
+
+        terms: [
+          Object.assign({ icon: HOUSE_ICON }, this._field('Проживание', this._houseText(r), hState)),
+          Object.assign({ icon: MEAL_ICON }, this._field('Питание', this._mealsText(r), r.meals.st === 'na' ? 'na' : (r.meals.st === 'no' ? 'no' : 'yes'))),
+          Object.assign({ icon: CIT_ICON }, this._field('Гражданство', r.conf && r.conf.cits ? r.conf.cits : r.cits.join(', '), r.conf && r.conf.cits ? 'conflict' : (r.cits.length ? 'yes' : 'na')))
+        ],
+
+        payOk: r.pay.st === 'yes', payNa: r.pay.st !== 'yes', payText: this._payText(r),
+        dedHas: r.dedSt === 'yes', dedNone: r.dedSt === 'no', dedNa: r.dedSt === 'na',
+        ded: r.ded.map((d) => ({
+          line: this._dedLine(d),
+          refund: d.refund === 'yes',
+          refundText: d.refund === 'yes' ? 'возврат после ' + d.refundAfter + ' смен' : ''
+        })),
+        travelOk: r.travel.st === 'yes', travelNo: r.travel.st === 'no', travelNa: r.travel.st === 'na',
+        travelText: this._travelText(r),
+
+        chips: [
+          { t: r.gender },
+          { t: this._ageText(r) ? 'возраст ' + this._ageText(r) : '' },
+          { t: this._medText(r) ? 'МК: ' + this._medText(r).toLowerCase() : '' },
+          { t: this._sbText(r) ? 'СБ: ' + this._sbText(r).toLowerCase() : '' },
+          { t: this._testText(r) ? 'тест: ' + this._testText(r).toLowerCase() : '' }
+        ].filter((c) => c.t),
+
+        media: media, hasMedia: media.length > 0,
+
+        hasGaps: gaps.length > 0,
+        gapLabel: gaps.length === 1 ? 'Требует решения: 1' : 'Требуют решения: ' + gaps.length,
+        openGaps: () => this.setState({ gaps: r.id }),
+
+        internal: showInternal,
+        cp: r.cp, obj: r.obj,
+        srcLine: 'у контрагента: «' + this._extTitle(r).t + '»' + (this._extTitle(r).ref ? ' № ' + this._extTitle(r).ref : '') + ' · ' + r.src,
+        openText: () => this.setState({ modal: r.id, copied: false }),
+        openDetail: () => this.setState({ detail: r.id })
+      };
+    });
+
+    const dRow = s.detail ? this.ROWS.find((r) => r.id === s.detail) : null;
+    const dRec = dRow ? this._rec(dRow) : null;
+    const dGroups = !dRow ? [] : [
+      { title: 'Обозначения', rows: [
+        this._field('Внутреннее название', dRow.prof + ' · ' + dRow.id, 'yes'),
+        this._field('Название у контрагента', '«' + this._extTitle(dRow).t + '»', 'yes'),
+        this._field('Номер у контрагента', this._extTitle(dRow).ref, this._extTitle(dRow).ref ? 'yes' : 'na')
+      ] },
+      { title: 'Условия', rows: [
+        this._field('Ставка кандидата', this._money(dRow.rate) + ' за смену', 'yes'),
+        this._field('Ставка за час', dRow.hourly ? dRow.hourly + ' ₽' : '', dRow.hourly ? 'yes' : 'na'),
+        this._field('График', dRow.sched, 'yes'),
+        this._field('Смена', dRow.hours ? dRow.hours + ' ч' : '', dRow.hours ? 'yes' : 'na'),
+        this._field('Тип смены', dRow.shiftType, dRow.shiftType ? 'yes' : 'na'),
+        this._field('Потребность', this._need(dRow), this._need(dRow) ? 'yes' : 'na')
+      ] },
+      { title: 'Кандидат', rows: [
+        this._field('Пол', dRow.gender, dRow.gender ? 'yes' : 'na'),
+        this._field('Возраст', this._ageText(dRow), this._ageText(dRow) ? 'yes' : 'na'),
+        this._field('Гражданство', dRow.conf && dRow.conf.cits ? dRow.conf.cits : dRow.cits.join(', '), dRow.conf && dRow.conf.cits ? 'conflict' : (dRow.cits.length ? 'yes' : 'na')),
+        this._field('Требования', dRow.req, dRow.req ? 'yes' : 'na'),
+        this._field('Медкнижка', this._medText(dRow), dRow.med === 'na' ? 'na' : 'yes'),
+        this._field('Проверка СБ', this._sbText(dRow), dRow.sb === 'na' ? 'na' : 'yes'),
+        this._field('Тестирование', this._testText(dRow), dRow.test === 'na' ? 'na' : 'yes')
+      ] },
+      { title: 'Быт', rows: [
+        this._field('Проживание', this._houseText(dRow), this._houseState(dRow)),
+        this._field('Постельное бельё', dRow.house.st === 'yes' && dRow.house.linen ? 'Выдаётся' : '', dRow.house.st === 'yes' && dRow.house.linen ? 'yes' : 'na'),
+        this._field('Транспорт до объекта', dRow.house.st === 'yes' ? dRow.house.transfer : '', dRow.house.st === 'yes' && dRow.house.transfer ? 'yes' : 'na'),
+        this._field('Питание', this._mealsText(dRow), dRow.meals.st === 'na' ? 'na' : (dRow.meals.st === 'no' ? 'no' : 'yes')),
+        this._field('Адрес объекта', dRow.addr, dRow.addr ? 'yes' : 'na')
+      ] },
+      { title: 'Деньги', rows: [
+        this._field('Выплаты', this._payText(dRow), dRow.pay.st === 'yes' ? 'yes' : 'na'),
+        this._field('Удержания', dRow.ded.map((d) => this._dedLine(d)).join('; ') || 'Удержаний нет', dRow.dedSt === 'na' ? 'na' : (dRow.dedSt === 'no' ? 'no' : 'yes')),
+        this._field('Проезд', this._travelText(dRow) || 'Не компенсируется', dRow.travel.st === 'na' ? 'na' : (dRow.travel.st === 'no' ? 'no' : 'yes'))
+      ] }
+    ];
+
+    const mRow = s.modal ? this.ROWS.find((r) => r.id === s.modal) : null;
+    const mMediaRaw = mRow ? this._mediaList(mRow) : [];
+    const mGen = mRow ? this._candidateText(mRow, s.picks) : null;
+
+    const gRow = s.gaps ? this.ROWS.find((r) => r.id === s.gaps) : null;
+
+    const allIssues = [];
+    this.ROWS.forEach((r) => this._issues(r).forEach((i) => allIssues.push(i)));
+    const gapTotal = allIssues.length;
+
+    // Один контрагент — одно сообщение: все недостающие поля по его заявкам объединяются.
+    const byCp = {};
+    this.ROWS.forEach((r) => {
+      const cpCfg = this.CPS.find((c) => c.name === r.cp);
+      if (cpCfg && (cpCfg.excluded || cpCfg.archived)) return;
+      const iss = this._issues(r);
+      const miss = iss.filter((i) => i.code === 'missing');
+      const unclear = iss.filter((i) => i.code === 'format' || i.code === 'unparsed');
+      if (!miss.length && !unclear.length) return;
+      const b = byCp[r.cp] || (byCp[r.cp] = { rows: [], items: [], fields: [] });
+      const ext = this._extTitle(r);
+      b.rows.push(r);
+      b.items.push({
+        title: ext.t, ref: ext.ref,
+        fields: miss.map((i) => i.label.toLowerCase()),
+        questions: unclear.map((i) => this._question(i))
+      });
+      miss.forEach((i) => { const f = i.label.toLowerCase(); if (b.fields.indexOf(f) < 0) b.fields.push(f); });
+    });
+
+    const outreach = Object.keys(byCp).map((cpName) => {
+      const b = byCp[cpName];
+      const cp = this._cp(cpName);
+      const st = this.OUTREACH[cpName] || { attempt: 1, sent: 'сегодня ' + cp.sendTime, silent: 0, greetedToday: false, asked: [] };
+      const dead = st.attempt >= this.MAX_TRIES;
+      const askedList = st.asked || [];
+      const fresh = b.fields.filter((f) => askedList.indexOf(f) < 0);
+      const freshItems = b.items
+        .map((it) => Object.assign({}, it, { fields: it.fields.filter((f) => askedList.indexOf(f) < 0) }))
+        .filter((it) => it.fields.length || it.questions.length);
+      return {
+        id: cp.id, cp: cpName, chat: cp.address + (cp.thread ? ' · тема ' + cp.thread : ''),
+        fields: b.fields.join(', '),
+        title: b.items.map((it) => '«' + it.title + '»').join(' · '),
+        text: this._outreachText(b.items, !st.greetedToday),
+        hasFollowUp: askedList.length > 0 && freshItems.length > 0,
+        followText: freshItems.length ? this._outreachText(freshItems, false) : '',
+        askedNote: askedList.length ? 'уже в запросе, повторно не спрашиваем: ' + askedList.join(', ') : '',
+        hasAsked: askedList.length > 0,
+        greetNote: st.greetedToday ? 'сегодня уже здоровались — приветствие не повторяется' : 'первое сообщение за сегодня — с приветствием',
+        status: !cp.deliveryOk ? 'Не доставлено' : (dead ? 'Нет ответа ' + st.silent + ' дн.' : 'Ждём ответа'),
+        dot: !cp.deliveryOk ? '#FF7B6B' : (dead ? '#FF7B6B' : '#16D7FF'),
+        dead: dead || !cp.deliveryOk,
+        rowsCount: b.rows.length,
+        meta: 'отправлено ' + st.sent + ' · попытка ' + st.attempt + ' из ' + this.MAX_TRIES + (dead ? ' · автоповторы исчерпаны' : ' · следующий повтор завтра в ' + cp.sendTime) + ' · заявок: ' + b.rows.length,
+        chatOpen: () => this._toast('Открываю ' + cp.address),
+        resend: () => this._toast('Сообщение отправлено повторно — ' + cp.name)
+      };
+    });
+
+    // Исключения: только то, что автоматика закрыть не может.
+    const exceptions = [];
+    this.ROWS.forEach((r) => this._issues(r).forEach((i) => {
+      if (i.code !== 'conflict' && i.code !== 'duplicate') return;
+      if (i.code === 'duplicate' && i.dupWith < r.id) return;
+      exceptions.push({
+        id: r.id, title: r.prof, place: r.city, what: i.what, status: i.status, dot: i.dot,
+        hasValues: i.values.length > 0 && !!i.choice,
+        values: i.values.map((v) => ({ v: v.v, src: v.src, take: () => this._resolve(i, 'Выбрано значение', v.v) })),
+        history: i.recommend,
+        isDup: !!i.dup,
+        mainAction: i.dup ? 'Открыть обе заявки' : 'Уточнить в чате',
+        chat: () => this._toast(i.dup ? 'Открываю обе заявки рядом' : 'Открываю чат ' + r.cp),
+        merge: () => this._resolve(i, 'Объединено с ' + i.dupWith, i.dupWith),
+        keep: () => this._resolve(i, 'Отмечено как разные позиции', ''),
+        snooze: () => this._toast('Отложено — вернётся завтра после автопрогона')
+      });
+    }));
+    outreach.filter((o) => o.dead).forEach((o) => {
+      const cp = this._cp(o.cp);
+      const st = this.OUTREACH[o.cp] || { silent: 3, sent: '' };
+      exceptions.push({
+        id: o.id, title: o.cp, place: o.rowsCount + ' заявки',
+        what: cp.deliveryOk
+          ? 'Заказчик не отвечает ' + st.silent + ' дня, автоповторы исчерпаны. Не хватает: ' + o.fields + '.'
+          : 'Сообщение не доставлено: ' + cp.delivery + '. Запросы по контрагенту не уходят.',
+        status: cp.deliveryOk ? 'Нет ответа' : 'Ошибка доставки', dot: '#FF7B6B', hasValues: false, values: [],
+        history: cp.contact ? 'Контактное лицо: ' + cp.contact : 'Контактное лицо не заполнено',
+        isDup: false, mainAction: cp.deliveryOk ? 'Позвонить заказчику' : 'Открыть настройки чата',
+        chat: () => (cp.deliveryOk ? this._toast('Открываю карточку ' + cp.name) : this._openCp(cp)),
+        merge: () => {}, keep: () => {},
+        snooze: () => this._toast('Отложено на сутки — автозапрос продолжится')
+      });
+    });
+    this.SOURCES.filter((x) => x.status === 'error').forEach((x) => exceptions.push({
+      id: x.id, title: x.cp, place: x.kind,
+      what: 'Источник недоступен: ' + x.error + '. Приём заявок по этому контрагенту остановлен с ' + x.last + '.',
+      status: 'Ошибка источника', dot: '#D9A441', hasValues: false, values: [],
+      history: 'Перепроверка каждые 30 минут · последняя попытка сегодня 13:30',
+      isDup: false, mainAction: 'Запросить новый доступ',
+      chat: () => this._toast('Запрос на доступ отправлен — ' + x.cp),
+      merge: () => {}, keep: () => {},
+      snooze: () => this._toast('Отложено на сутки')
+    }));
+
+    const autoOk = this.ROWS.filter((r) => this._issues(r).length === 0).length;
+    const links = [];
+    this.ROWS.forEach((r) => (r.media || []).forEach((m) => {
+      if (m.alive) return;
+      const st = this.LINK_STATE[r.id + '|' + m.kind] || { status: 'перепроверяется', dot: '#16D7FF', meta: 'перепроверка каждые 6 часов' };
+      links.push({ label: this.MEDIA_META[m.kind].label + ' · ' + r.prof, url: m.url, status: st.status, dot: st.dot, meta: st.status + ' · ' + st.meta });
+    }));
+
+    const selOpt = (v, t) => ({ v: v, t: t });
+
+    return {
+      isSearch: s.screen === 'search',
+      isNorm: s.screen === 'norm',
+      runLine: 'прогон 13:02 · следующий 12:00',
+      tabs: [
+        { label: 'Подбор', count: this.ROWS.length, on: s.screen === 'search', off: s.screen !== 'search', go: () => this.setState({ screen: 'search' }) },
+        { label: 'Админ', count: exceptions.length, on: s.screen === 'norm', off: s.screen !== 'norm', go: () => this._openAdmin() }
+      ],
+
+      authOpen: s.authOpen,
+      authPass: s.authPass,
+      authErr: s.authErr,
+      onAuthPass: (e) => this.setState({ authPass: e.target.value, authErr: false }),
+      onAuthKey: (e) => { if (e.key === 'Enter') this._submitAuth(); },
+      authSubmit: () => this._submitAuth(),
+      authCancel: () => this.setState({ authOpen: false, authPass: '', authErr: false }),
+
+      citySearch: s.citySearch,
+      onCitySearch: (e) => this.setState({ citySearch: e.target.value }),
+      cityList: cityList,
+      picked: s.sel.map((n) => ({ name: n, remove: () => this.setState({ sel: s.sel.filter((x) => x !== n) }) })),
+      hasPicked: s.sel.length > 0,
+      cityPickedText: s.sel.length ? 'выбрано ' + s.sel.length : 'все города',
+      clearCities: () => this.setState({ sel: [] }),
+
+      radiusOn: s.radius > 0,
+      radiusOff: !s.radius,
+      toggleRadius: () => this.setState({ radius: s.radius ? 0 : 50 }),
+      radiusOpts: [25, 50, 100].map((km) => ({
+        label: km + ' км', on: s.radius === km, off: s.radius !== km,
+        pick: () => this.setState({ radius: km })
+      })),
+      nearSummary: !s.sel.length
+        ? 'Сначала выберите город — радиус считается от него.'
+        : (near.length ? 'Плюс ' + near.length + ': ' + near.join(', ') : 'В радиусе ' + s.radius + ' км других городов реестра нет.'),
+
+      numFilters: [
+        { label: 'Ставка кандидата от', ph: '3 000', value: s.rateMin, set: (e) => this.setState({ rateMin: e.target.value }) },
+        { label: 'Возраст кандидата', ph: '45', value: s.ageCand, set: (e) => this.setState({ ageCand: e.target.value }) }
+      ],
+      selFilters: [
+        { label: 'Гражданство', value: s.fCit, set: (e) => this.setState({ fCit: e.target.value }), opts: [selOpt('', 'любое'), selOpt('РФ', 'РФ'), selOpt('РФ + РБ', 'РФ + РБ'), selOpt('ЕАЭС', 'ЕАЭС')] },
+        { label: 'Проживание', value: s.fHouse, set: (e) => this.setState({ fHouse: e.target.value }), opts: [selOpt('', 'любое'), selOpt('yes', 'есть'), selOpt('free', 'бесплатно'), selOpt('no', 'нет')] },
+        { label: 'Питание', value: s.fMeals, set: (e) => this.setState({ fMeals: e.target.value }), opts: [selOpt('', 'любое'), selOpt('yes', 'есть'), selOpt('free', 'бесплатно'), selOpt('no', 'нет')] },
+        { label: 'Пол', value: s.fGender, set: (e) => this.setState({ fGender: e.target.value }), opts: [selOpt('', 'любой'), selOpt('мужчины', 'мужчины'), selOpt('женщины', 'женщины'), selOpt('пары', 'пары')] },
+        { label: 'Медкнижка', value: s.fMed, set: (e) => this.setState({ fMed: e.target.value }), opts: [selOpt('', 'любая'), selOpt('no', 'не нужна'), selOpt('arranged', 'можно без неё')] },
+        { label: 'Проверка СБ', value: s.fSb, set: (e) => this.setState({ fSb: e.target.value }), opts: [selOpt('', 'любая'), selOpt('none', 'нет'), selOpt('notfull', 'кроме полной')] }
+      ],
+      moreFilters: [
+        { label: 'График', value: s.fSched, set: (e) => this.setState({ fSched: e.target.value }), opts: [selOpt('', 'любой'), selOpt('вахта', 'вахта'), selOpt('5/2', '5/2'), selOpt('6/1', '6/1'), selOpt('2/2', '2/2')] },
+        { label: 'Выплаты', value: s.fPay, set: (e) => this.setState({ fPay: e.target.value }), opts: [selOpt('', 'любые'), selOpt('weekly', 'еженедельно'), selOpt('biweekly', '2 раза в месяц'), selOpt('advance', 'есть аванс')] },
+        { label: 'Тип ставки рекрутера', value: s.fRec, set: (e) => this.setState({ fRec: e.target.value }), opts: [selOpt('', 'любая'), selOpt('percent', 'процент'), selOpt('fixed', 'фикс'), selOpt('none', 'не задана')] }
+      ],
+      moreOpen: s.moreOpen,
+      moreLabel: s.moreOpen ? 'Свернуть' : 'Ещё фильтры',
+      moreCount: [s.fSched, s.fPay, s.fRec].filter(Boolean).length,
+      moreCountOn: !s.moreOpen && [s.fSched, s.fPay, s.fRec].filter(Boolean).length > 0,
+      toggleMore: () => this.setState({ moreOpen: !s.moreOpen }),
+      resetFilters: () => this.setState({ rateMin: '', recPct: '', ageCand: '', fRec: '', fHouse: '', fMeals: '', fCit: '', fGender: '', fMed: '', fSb: '', fSched: '', fPay: '' }),
+
+      scopes: [
+        { label: 'Все активные', count: this.ROWS.length, key: 'all' },
+        { label: 'Под заявку', count: this.ROWS.filter((r) => /комплектов|сборщик/i.test(r.prof)).length, key: 'req' },
+        { label: 'С пробелами', count: this.ROWS.filter((r) => this._issues(r).length > 0).length, key: 'gaps' }
+      ].map((x) => ({
+        label: x.label, count: x.count, on: s.scope === x.key, off: s.scope !== x.key,
+        go: () => this.setState({ scope: x.key })
+      })),
+      scopeNote: s.scope === 'req',
+      reqTitle: 'Комплектовщик · Московская область · 25 человек',
+      reqMeta: 'ЗАК-2026-0184 · закрыть до 25 августа · ответственный Кузнецова',
+
+      q: s.q,
+      onQ: (e) => this.setState({ q: e.target.value }),
+      sort: s.sort,
+      onSort: (e) => this.setState({ sort: e.target.value }),
+
+      list: list,
+      listRef: this._listRef,
+      isEmpty: list.length === 0,
+      foundText: 'Найдено ' + list.length + ' из ' + this.ROWS.length + ' активных позиций',
+      gapText: gapTotal ? gapTotal + ' проблем требуют решения' : 'все заявки прошли проверку',
+
+      gOpen: !!gRow,
+      gTitle: gRow ? 'Требуют решения: ' + this._issues(gRow).length + ' — ' + gRow.prof : '',
+      gList: gRow ? this._issues(gRow).map((i) => ({ k: i.label, why: i.what, dot: i.dot })) : [],
+      gClose: () => this.setState({ gaps: null }),
+      gAsk: () => { this.setState({ gaps: null }); this._toast('Запрос заказчику отправлен — поля помечены «ждём ответа»'); },
+
+      dOpen: !!dRow,
+      dId: dRow ? dRow.id : '',
+      dProf: dRow ? dRow.prof : '',
+      dPlace: dRow ? [dRow.city, dRow.district].filter(Boolean).join(' · ') : '',
+      dObjLine: dRow ? (showInternal ? dRow.obj : this._employer(dRow)) : '',
+      dRecKnown: !!dRec, dRecGap: !!dRow && !dRec,
+      dRecValue: dRow ? this._recText(dRow) : '',
+      dRecRows: dRec ? [
+        { k: 'База расчёта', v: dRec.kind === 'percent' && dRec.baseAmount ? dRec.base + ' — ' + this._money(dRec.baseAmount) : dRec.base },
+        { k: 'Формула', v: this._recFormula(dRec) },
+        { k: 'Условие начисления', v: dRec.rule },
+        { k: 'Этап выплаты', v: dRec.stage },
+        { k: 'Гарантийный период', v: dRec.guar }
+      ] : [],
+      dGroups: dGroups,
+      dMedia: dRow ? this._mediaList(dRow).map((x) => ({
+        label: this.MEDIA_META[x.kind].label, url: x.url, dead: !x.alive,
+        meta: x.src + ' · обновлено ' + x.upd + ' · ' + (x.vis === 'public' ? 'публичная' : 'внутренняя')
+      })) : [],
+      dHasMedia: !!dRow && this._mediaList(dRow).length > 0,
+      dRaw: dRow ? (this.RAW[dRow.id] || '') : '',
+      dHasRaw: !!(dRow && this.RAW[dRow.id]),
+      dInternal: !!dRow && showInternal,
+      dCp: dRow ? dRow.cp : '',
+      dObj: dRow ? dRow.obj : '',
+      dSrcLine: dRow ? dRow.src + ' · ' + dRow.ext + ' · ' + dRow.seen : '',
+      dClose: () => this.setState({ detail: null }),
+      dText: () => this.setState({ detail: null, modal: dRow ? dRow.id : null, copied: false }),
+
+      mOpen: !!mRow,
+      mAlias: mRow ? this._employer(mRow) : '',
+      mText: mGen ? mGen.text : '',
+      mMedia: mMediaRaw.map((x) => {
+        const key = mRow.id + '|' + x.kind;
+        const pickable = x.vis === 'public' && x.alive;
+        return {
+          label: this.MEDIA_META[x.kind].label, url: x.url,
+          pickable: pickable, blocked: !pickable,
+          blockReason: !x.alive ? 'ссылка недоступна — в сообщение не добавится' : 'внутренний материал — кандидату не отправляется',
+          on: !!s.picks[key], off: !s.picks[key],
+          toggle: () => {
+            const next = Object.assign({}, s.picks);
+            if (next[key]) delete next[key]; else next[key] = true;
+            this.setState({ picks: next, copied: false });
+          }
+        };
+      }),
+      mHasMedia: mMediaRaw.length > 0,
+      mRemoved: mGen ? mGen.removed.map((t) => ({ t: t })) : [],
+      mHasRemoved: !!(mGen && mGen.removed.length),
+      mCopyLabel: s.copied ? 'Скопировано' : 'Скопировать с материалами',
+      mClose: () => this.setState({ modal: null, copied: false }),
+      mCopy: () => {
+        try { navigator.clipboard.writeText(mGen ? mGen.text : ''); } catch (e) {}
+        this.setState({ copied: true });
+        this._toast('Текст скопирован — контрагент, объект и ставка рекрутера вырезаны');
+      },
+
+      kpis: [
+        { n: autoOk, label: 'принято автоматически', dot: '#6EE7C1' },
+        { n: outreach.length, label: 'запросов заказчикам', dot: '#16D7FF' },
+        { n: links.length, label: 'ссылок перепроверяется', dot: '#A4F4FD' },
+        { n: exceptions.length, label: 'исключений для вас', dot: exceptions.length ? '#FF7B6B' : '#6EE7C1' }
+      ],
+      sendTime: this.SEND_TIME,
+      nextRunText: 'следующая рассылка завтра в ' + this.SEND_TIME + ' · сегодня отправлено ' + outreach.filter((o) => o.meta.indexOf('сегодня') > 0).length,
+      sendNow: () => this._toast('Запросы отправлены заказчикам: ' + outreach.length),
+      maxTries: this.MAX_TRIES,
+      tplText: outreach.length ? outreach[0].text : 'Добрый день! В заявке ELT-2026-000000 отсутствует следующая информация: … Пожалуйста, дополните данные.',
+
+      adminTabs: [
+        { key: 'exc', label: 'Исключения', count: exceptions.length },
+        { key: 'req', label: 'Запросы', count: outreach.length },
+        { key: 'src', label: 'Контрагенты', count: this.CPS.length }
+      ].map((t) => ({ label: t.label, count: t.count, on: s.adminTab === t.key, off: s.adminTab !== t.key, go: () => this.setState({ adminTab: t.key }) })),
+      isExc: s.adminTab === 'exc',
+      isReq: s.adminTab === 'req',
+      isSrc: s.adminTab === 'src',
+
+      exceptions: exceptions,
+      noExceptions: exceptions.length === 0,
+      outreach: outreach,
+      noOutreach: outreach.length === 0,
+
+      srcSummary: this.CPS.filter((x) => !x.archived).length + ' контрагентов · ' + this.CPS.filter((x) => !x.archived && !x.excluded && x.deliveryOk).length + ' в работе'
+        + (this.CPS.filter((x) => x.archived).length ? ' · в архиве ' + this.CPS.filter((x) => x.archived).length : ''),
+      addSource: () => this._openCp({ id: '', name: '', alias: '', kind: 'Telegram-чат', address: '', times: '12:00', required: ['cits', 'house', 'meals', 'pay'], contact: '', bot: '@eltera_navigator_bot', token: '', chat: '', thread: '', sendTime: '09:00', tpl: 'Добрый день! В заявках {позиции} отсутствует следующая информация: {поля}. Пожалуйста, дополните данные.', delivery: 'ещё не отправлялось', deliveryOk: true }),
+      sources: this.CPS.filter((x) => !x.archived).map((x) => {
+        const src = this.SOURCES.find((y) => y.cp === x.name);
+        const broken = !x.deliveryOk || (src && src.status === 'error');
+        return {
+          cp: x.name, kind: x.kind, address: x.address,
+          status: x.excluded ? 'Исключён' : (broken ? (x.deliveryOk ? 'Ошибка источника' : 'Чат недоступен') : 'Работает'),
+          dot: x.excluded ? '#64748B' : (broken ? '#D9A441' : '#6EE7C1'),
+          positions: 'позиций: ' + this.ROWS.filter((r) => r.cp === x.name).length,
+          meta: x.excluded
+            ? 'приём данных и сообщения остановлены · связи и история сохранены'
+            : 'прогон ' + x.times + ' · запрос в ' + x.sendTime + ' · ' + x.delivery,
+          check: () => this._toast('Проверяю подключение — ' + x.name),
+          edit: () => this._openCp(x),
+          pauseLabel: 'Тестовое сообщение',
+          pause: () => this._toast('Тестовое сообщение отправлено в ' + x.address),
+          menuOn: s.cpMenu === x.id, menuOff: s.cpMenu !== x.id,
+          menu: () => this._cpMenu(x.id),
+          exclude: () => this._cpExclude(x),
+          excludeLabel: x.excluded ? 'Вернуть в работу' : 'Исключить',
+          remove: () => this._cpAskDelete(x)
+        };
+      }),
+      archived: this.CPS.filter((x) => x.archived).map((x) => ({
+        cp: x.name, meta: 'в архиве · заявки и переписка сохранены',
+        restore: () => this._cpRestore(x)
+      })),
+      hasArchived: this.CPS.some((x) => x.archived),
+
+      delOpen: !!s.cpDelete,
+      delName: s.cpDelete ? s.cpDelete.name : '',
+      delLinked: !!s.cpDelete && (this.ROWS.filter((r) => r.cp === s.cpDelete.name).length > 0 || !!this.OUTREACH[s.cpDelete.name]),
+      delNote: s.cpDelete
+        ? (this.ROWS.filter((r) => r.cp === s.cpDelete.name).length > 0 || !!this.OUTREACH[s.cpDelete.name]
+          ? 'С контрагентом связаны заявки и история переписки. Данные не удаляются — контрагент уйдёт в архив, связи внутри системы сохранятся.'
+          : 'Связанных заявок и переписки нет — контрагент будет удалён полностью.')
+        : '',
+      delPass: s.delPass,
+      delErr: s.delErr,
+      onDelPass: (e) => this.setState({ delPass: e.target.value, delErr: false }),
+      onDelKey: (e) => { if (e.key === 'Enter') this._cpConfirmDelete(); },
+      delConfirm: () => this._cpConfirmDelete(),
+      delCancel: () => this.setState({ cpDelete: null, delPass: '', delErr: false }),
+      gh: {
+        repo: this.GITHUB.repo, branch: this.GITHUB.branch, file: this.GITHUB.file, synced: this.GITHUB.synced,
+        sync: () => this._toast('Код и развёртывание обновлены из ' + this.GITHUB.branch),
+        open: () => this._toast('Открываю репозиторий ' + this.GITHUB.repo)
+      },
+
+      cpOpen: !!s.cpEdit,
+      cpTitle: s.cpEdit ? (s.cpEdit.id ? 'Настройки контрагента' : 'Новый контрагент') : '',
+      cpVals: s.cpEdit || {},
+      cpFields: s.cpEdit ? [
+        { k: 'name', label: 'Наименование контрагента', v: s.cpEdit.name },
+        { k: 'alias', label: 'Публичный алиас для кандидата', v: s.cpEdit.alias },
+        { k: 'address', label: 'Источник данных — адрес', v: s.cpEdit.address },
+        { k: 'times', label: 'Расписание прогонов', v: s.cpEdit.times },
+        { k: 'contact', label: 'Контактное лицо', v: s.cpEdit.contact },
+        { k: 'bot', label: 'Telegram-бот', v: s.cpEdit.bot },
+        { k: 'token', label: 'Токен BotFather', v: s.cpEdit.token, secret: true },
+        { k: 'chat', label: 'chat_id', v: s.cpEdit.chat },
+        { k: 'thread', label: 'message_thread_id (тема)', v: s.cpEdit.thread },
+        { k: 'sendTime', label: 'Время отправки', v: s.cpEdit.sendTime }
+      ].map((f) => Object.assign(f, { set: (e) => this._setCp(f.k, e.target.value) })) : [],
+      cpKind: s.cpEdit ? s.cpEdit.kind : '',
+      cpKindSet: (e) => this._setCp('kind', e.target.value),
+      cpTpl: s.cpEdit ? s.cpEdit.tpl : '',
+      cpTplSet: (e) => this._setCp('tpl', e.target.value),
+      cpReq: s.cpEdit ? this.FIELD_KEYS.map((f) => ({
+        t: f.t, on: s.cpEdit.required.indexOf(f.k) >= 0, off: s.cpEdit.required.indexOf(f.k) < 0,
+        toggle: () => this._toggleReq(f.k)
+      })) : [],
+      cpDelivery: s.cpEdit ? s.cpEdit.delivery : '',
+      cpTest: () => this._toast('Подключение проверено: бот в чате, права на отправку есть'),
+      cpTestMsg: () => this._toast('Тестовое сообщение отправлено' + (s.cpEdit && s.cpEdit.thread ? ' в тему ' + s.cpEdit.thread : '')),
+      cpSave: () => this._saveCp(),
+      cpCancel: () => this.setState({ cpEdit: null }),
+      links: links,
+      linkCheckNote: 'перепроверка каждые 6 часов',
+      toast: s.toast,
+      toastOn: !!s.toast
+    };
+  }
+}
+</script>
+</body>
+</html>

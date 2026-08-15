@@ -1,0 +1,18 @@
+{
+  "name": "eltera-navigator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Eltera Navigator — реестр вахтовых позиций и админ-панель автопроверки",
+  "scripts": {
+    "start": "npx --yes serve . -l 5173",
+    "dev": "npx --yes serve . -l 5173",
+    "build": "node scripts/build.js",
+    "check": "node scripts/check.js"
+  },
+  "devDependencies": {
+    "serve": "^14.2.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
