@@ -43,6 +43,10 @@ def main() -> None:
                         help="проверить пароль против AUTH_PASSWORD_HASH из окружения")
     parser.add_argument("--generate", action="store_true",
                         help="сгенерировать стойкий пароль и показать его один раз")
+    parser.add_argument("--write-env", metavar="FILE", nargs="?", const=".env",
+                        help="записать AUTH_PASSWORD_HASH прямо в .env (по умолчанию ./.env)")
+    parser.add_argument("--email", default="",
+                        help="заодно записать AUTH_EMAIL")
     args = parser.parse_args()
 
     if args.check:
@@ -61,12 +65,52 @@ def main() -> None:
         password = ask_password()
 
     encoded = hash_password(password)
+
+    if args.write_env:
+        # Пишем сами: копирование длинной строки хеша руками — это лишний шаг,
+        # на котором легко потерять символ и потом гадать, почему не пускает.
+        updates = {"AUTH_PASSWORD_HASH": encoded}
+        if args.email:
+            updates["AUTH_EMAIL"] = args.email.strip().lower()
+        written = _write_env(args.write_env, updates)
+        for name in written:
+            print(f"{name} записан в {args.write_env}")
+        print("\nПерезапустите приложение.")
+        return
+
     print("Строка для .env:\n")
     print(f"AUTH_PASSWORD_HASH={encoded}\n")
     print("Рядом должны быть заданы:")
     print("    AUTH_EMAIL=<рабочая почта>")
     print("    SECRET_KEY=<openssl rand -hex 32>")
     print("\nПосле правки .env перезапустите приложение.")
+
+
+def _write_env(path: str, updates: dict) -> list:
+    """Правит .env на месте: строку с ключом заменяет, отсутствующую дописывает.
+
+    Остальные строки, комментарии и порядок сохраняются — .env на сервере
+    писали люди, и перетасовывать его ради одной переменной незачем.
+    """
+    lines = []
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+
+    done = set()
+    for i, line in enumerate(lines):
+        for name, value in updates.items():
+            if line.startswith(f"{name}=") and name not in done:
+                lines[i] = f"{name}={value}"
+                done.add(name)
+    for name, value in updates.items():
+        if name not in done:
+            lines.append(f"{name}={value}")
+            done.add(name)
+
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    return sorted(done)
 
 
 if __name__ == "__main__":
