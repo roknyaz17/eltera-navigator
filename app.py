@@ -216,10 +216,13 @@ def check_required_env() -> None:
         )
     password = os.getenv("WEB_PASSWORD", "")
     if password.strip().lower() in WEAK_PASSWORDS:
-        logger.warning(
-            "[auth] WEB_PASSWORD — значение из примера. Смените его: "
-            "приложение доступно из сети и защищено только этой парой."
-        )
+        if BASIC_ENABLED:
+            raise RuntimeError(
+                "WEB_PASSWORD — значение из примера, а Basic включён. Этой парой "
+                "закрыты /metrics, /jobs и /health/details, и она доступна из сети.\n"
+                "Либо смените WEB_PASSWORD, либо выключите Basic: WEB_BASIC_ENABLED=0"
+            )
+        logger.warning("[auth] WEB_PASSWORD — значение из примера, но Basic выключен")
     if BASIC_ENABLED and password:
         logger.warning(
             "[auth] Basic-доступ по WEB_USER/WEB_PASSWORD ещё включён. "
@@ -282,7 +285,20 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # переведены, и гасится WEB_BASIC_ENABLED=0.
 
 security = HTTPBasic(auto_error=False)
-_throttle = auth.LoginThrottle()
+
+# Лимит на адрес. Раньше LOGIN_MAX_ATTEMPTS объявлялся, читался в конфиг —
+# и не доходил сюда: всегда действовала зашитая пятёрка.
+_throttle = auth.LoginThrottle(max_attempts=auth.load_config().max_attempts)
+
+# Предохранитель от перебора с разных адресов. Лимит на IP от ботнета не спасает:
+# каждый запрос приходит с нового адреса и упирается в свежий счётчик.
+# Порог намеренно щедрый — офис за одним внешним адресом не должен его задевать.
+_global_throttle = auth.LoginThrottle(
+    max_attempts=max(50, auth.load_config().max_attempts * 20),
+    window_sec=900,
+    block_sec=300,
+)
+GLOBAL_KEY = "*"
 
 
 # X-Forwarded-For клиент подставляет сам. Пока приложение слушает напрямую,
@@ -347,6 +363,16 @@ def verify_creds(
     if _basic_ok(request, creds):
         return creds.username
 
+    if creds is not None and BASIC_ENABLED and request.url.path in BASIC_PATHS:
+        # Перебор по Basic раньше не ограничивался и не оставлял следов
+        # в журнале: подбор пароля к /metrics был полностью невидим.
+        ip = _client_ip(request)
+        if _throttle.blocked_for(ip):
+            raise HTTPException(429, "Слишком много попыток")
+        _throttle.register_failure(ip)
+        _global_throttle.register_failure(GLOBAL_KEY)
+        auth.log_login(ok=False, email=creds.username, ip=ip, reason="basic: неверная пара")
+
     if _wants_html(request):
         target = request.url.path
         if request.url.query:
@@ -401,7 +427,7 @@ async def login_submit(
             status_code=status,
         )
 
-    wait = _throttle.blocked_for(ip)
+    wait = _throttle.blocked_for(ip) or _global_throttle.blocked_for(GLOBAL_KEY)
     if wait:
         auth.log_login(ok=False, email=email, ip=ip, reason="превышен лимит попыток")
         return _fail(
@@ -419,6 +445,7 @@ async def login_submit(
     ok, reason = await asyncio.to_thread(auth.check_credentials, email, password, config)
     if not ok:
         blocked_for = _throttle.register_failure(ip)
+        _global_throttle.register_failure(GLOBAL_KEY)
         auth.log_login(ok=False, email=email, ip=ip, reason=reason)
         if blocked_for:
             return _fail(

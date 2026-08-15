@@ -113,7 +113,7 @@ def test_required_env_check_rejects_empty(monkeypatch):
     check()  # не должно падать
 
 
-def test_weak_password_is_reported(monkeypatch):
+def test_weak_basic_password_stops_startup(monkeypatch):
     source = open(APP_SOURCE, encoding="utf-8").read()
     start = source.index("REQUIRED_ENV = {")
     end = source.index("@asynccontextmanager")
@@ -126,9 +126,10 @@ def test_weak_password_is_reported(monkeypatch):
     monkeypatch.setenv("AUTH_PASSWORD_HASH", "pbkdf2_sha256$600000$c2FsdA==$aGFzaA==")
     monkeypatch.setenv("WEB_USER", "admin")
     monkeypatch.setenv("WEB_PASSWORD", "change_me_please")
-    namespace["check_required_env"]()
-    assert stub.warnings, "Пароль из примера прошёл без предупреждения"
-    assert "WEB_PASSWORD" in stub.warnings[0]
+    with pytest.raises(RuntimeError) as exc:
+        namespace["check_required_env"]()
+    assert "WEB_PASSWORD" in str(exc.value)
+    assert "WEB_BASIC_ENABLED=0" in str(exc.value), "нет подсказки, как выйти из положения"
 
 
 class _StubLogger:
@@ -259,3 +260,32 @@ def test_route_scanner_sees_single_quotes(tmp_path):
         for line in lines
     ]
     assert any(found), "роут с одинарными кавычками не распознан"
+
+
+def test_login_attempt_limit_comes_from_env():
+    """LOGIN_MAX_ATTEMPTS должен доходить до ограничителя.
+
+    Переменная была объявлена, читалась в конфиг — и терялась: ограничитель
+    создавался без аргументов и всегда работал на зашитой пятёрке.
+    """
+    source = open(APP_SOURCE, encoding="utf-8").read()
+    m = re.search(r"_throttle = auth\.LoginThrottle\(([^)]*)\)", source)
+    assert m, "ограничитель не найден"
+    assert "max_attempts" in m.group(1), "LOGIN_MAX_ATTEMPTS не доходит до ограничителя"
+
+
+def test_global_throttle_exists():
+    """Лимит на адрес не спасает от перебора с разных адресов."""
+    source = open(APP_SOURCE, encoding="utf-8").read()
+    assert "_global_throttle" in source, "нет предохранителя от распределённого перебора"
+    handler = source.split("async def login_submit(")[1].split("\n@app.")[0]
+    assert "_global_throttle.register_failure" in handler
+    assert "_global_throttle.blocked_for" in handler
+
+
+def test_failed_basic_is_throttled_and_logged():
+    """Перебор по Basic не должен быть невидимым и безлимитным."""
+    source = open(APP_SOURCE, encoding="utf-8").read()
+    body = source.split("def verify_creds(")[1].split("\n@app.")[0]
+    assert "_throttle.register_failure" in body, "неудачный Basic не считается"
+    assert "auth.log_login" in body, "неудачный Basic не пишется в журнал"
