@@ -423,3 +423,23 @@ def test_no_client_side_admin_password():
     assert "1207" not in template, "демо-пароль макета вернулся в шаблон"
     assert "eltera_navigator_admin_v1" not in template, "гейт админки снова в localStorage"
     assert "DATA.me" in template, "экран не спрашивает роль у сервера"
+
+
+def test_all_template_responses_use_keyword_form():
+    """starlette 1.1 требует TemplateResponse(request=..., name=..., context=...).
+
+    Старая позиционная форма не устарела, а удалена: словарь контекста уходит
+    в параметр name, Jinja пытается использовать его как ключ кеша шаблонов
+    и падает с «unhashable type: dict» — то есть страница отдаёт 500.
+    Ошибку видно только в браузере, ни один unit-тест её не ловит,
+    поэтому проверяем форму вызова.
+    """
+    lines = open(APP_SOURCE, encoding="utf-8").read().split("\n")
+    bad = []
+    for i, line in enumerate(lines):
+        if "TemplateResponse(" not in line:
+            continue
+        following = lines[i + 1].strip() if i + 1 < len(lines) else ""
+        if not following.startswith("request="):
+            bad.append(f"строка {i + 1}: {following[:50]}")
+    assert not bad, "позиционная форма TemplateResponse — страница отдаст 500:\n" + "\n".join(bad)

@@ -439,8 +439,9 @@ async def login_form(request: Request, next: str = "/"):
     if auth.read_session(request.cookies.get(auth.COOKIE_NAME, "")):
         return RedirectResponse(_safe_next(next), status_code=303)
     response = templates.TemplateResponse(
-        "login.html",
-        {"request": request, "next_url": _safe_next(next), "email": "", "error": "", "blocked": False},
+        request=request,
+        name="login.html",
+        context={"next_url": _safe_next(next), "email": "", "error": "", "blocked": False},
     )
     # Форма входа не должна оседать в кеше браузера и промежуточных прокси.
     response.headers["Cache-Control"] = "no-store"
@@ -468,8 +469,9 @@ async def login_submit(
 
     def _fail(message: str, *, blocked: bool = False, status: int = 401):
         return templates.TemplateResponse(
-            "login.html",
-            {"request": request, "next_url": target, "email": email, "error": message, "blocked": blocked},
+            request=request,
+            name="login.html",
+            context={"next_url": target, "email": email, "error": message, "blocked": blocked},
             status_code=status,
         )
 
@@ -754,10 +756,11 @@ MIN_PASSWORD_LENGTH = 12
 async def password_form(request: Request, user: str = Depends(verify_creds)):
     person = getattr(request.state, "user", None)
     response = templates.TemplateResponse(
-        "password_change.html",
-        {"request": request, "email": user, "error": "",
-         "min_length": MIN_PASSWORD_LENGTH,
-         "forced": bool(person and person.must_change_password)},
+        request=request,
+        name="password_change.html",
+        context={"email": user, "error": "",
+                 "min_length": MIN_PASSWORD_LENGTH,
+                 "forced": bool(person and person.must_change_password)},
     )
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -780,9 +783,10 @@ async def password_submit(
 
     def _fail(message: str):
         return templates.TemplateResponse(
-            "password_change.html",
-            {"request": request, "email": user, "error": message,
-             "min_length": MIN_PASSWORD_LENGTH, "forced": person.must_change_password},
+            request=request,
+            name="password_change.html",
+            context={"email": user, "error": message,
+                     "min_length": MIN_PASSWORD_LENGTH, "forced": person.must_change_password},
             status_code=400,
         )
 
