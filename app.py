@@ -820,31 +820,67 @@ def _temp_password() -> str:
     return secrets.token_urlsafe(12)
 
 
-@app.get("/admin/users", response_class=HTMLResponse)
-async def admin_users(request: Request, admin: "users_mod.User" = Depends(require_admin)):
-    with registry_db.connect() as conn:
-        people = users_mod.list_users(conn)
-        journal = users_mod.recent_logins(conn, limit=50)
-    response = templates.TemplateResponse(
-        "admin_users.html",
-        {"request": request, "current_user": admin, "people": people, "journal": journal,
-         "roles": [(users_mod.ROLE_RECRUITER, "Рекрутер"), (users_mod.ROLE_ADMIN, "Администратор")],
-         "error": request.query_params.get("error", ""),
-         "notice": request.query_params.get("notice", ""),
-         "issued": None},
-    )
-    response.headers["Cache-Control"] = "no-store"
-    return response
+# ---------- Доступы: данные для вкладки «Доступы» в админке ----------
+#
+# Отдельная ручка, а не часть /api/navigator: список сотрудников и журнал
+# входов не должны уезжать рекрутеру вообще, даже если он их не увидит
+# на экране. Кто не администратор — тот этих данных не получает.
+
+def _people_payload(conn) -> dict:
+    def one(person) -> dict:
+        return {
+            "id": person.user_id,
+            "email": person.email,
+            "name": person.name,
+            "role": person.roles[0] if person.roles else "",
+            "active": person.is_active,
+            "temp": person.must_change_password,
+            "expires": person.password_expires_at,
+            "lastLogin": person.last_login_at,
+            "createdAt": person.created_at,
+            "createdBy": person.created_by,
+            "disabledAt": person.disabled_at,
+        }
+
+    return {
+        "people": [one(p) for p in users_mod.list_users(conn)],
+        "journal": [
+            {"at": r["at"], "email": r["email"], "ip": r["ip"],
+             "ok": bool(r["ok"]), "reason": r["reason"]}
+            for r in users_mod.recent_logins(conn, limit=50)
+        ],
+        "roles": [
+            {"key": users_mod.ROLE_RECRUITER, "title": "Рекрутер"},
+            {"key": users_mod.ROLE_ADMIN, "title": "Администратор"},
+        ],
+        "ttlHours": users_mod.TEMP_PASSWORD_TTL_HOURS,
+    }
 
 
-@app.post("/admin/users/create", response_class=HTMLResponse)
-async def admin_users_create(
+@app.get("/api/users")
+async def api_users(admin: "users_mod.User" = Depends(require_admin)) -> JSONResponse:
+    import asyncio
+
+    def _work():
+        with registry_db.connect() as conn:
+            payload = _people_payload(conn)
+            payload["me"] = admin.user_id
+            return payload
+
+    return JSONResponse(await asyncio.to_thread(_work))
+
+
+def _temp_password() -> str:
+    """Временный пароль, который не стыдно продиктовать вслух."""
+    return secrets.token_urlsafe(12)
+
+
+@app.post("/api/users")
+async def api_users_create(
         request: Request,
-        email: str = Form(""),
-        name: str = Form(""),
-        role: str = Form(users_mod.ROLE_RECRUITER),
+        payload: dict,
         admin: "users_mod.User" = Depends(require_admin),
-):
+) -> JSONResponse:
     import asyncio
 
     if not _same_origin(request):
@@ -854,33 +890,32 @@ async def admin_users_create(
     def _work():
         with registry_db.connect() as conn:
             person = users_mod.create_user(
-                conn, email=email, name=name, role=role,
-                temp_password=password, created_by=admin.email,
+                conn,
+                email=str(payload.get("email") or ""),
+                name=str(payload.get("name") or ""),
+                role=str(payload.get("role") or users_mod.ROLE_RECRUITER),
+                temp_password=password,
+                created_by=admin.email,
             )
-            return person, users_mod.list_users(conn), users_mod.recent_logins(conn, limit=50)
+            data = _people_payload(conn)
+            data["me"] = admin.user_id
+            # Пароль отдаётся ровно один раз, в ответ на создание. Больше он
+            # нигде не появится: в базе хеш, в журнале его нет.
+            data["issued"] = {"email": person.email, "password": password,
+                              "expires": person.password_expires_at}
+            return data
 
     try:
-        person, people, journal = await asyncio.to_thread(_work)
+        return JSONResponse(await asyncio.to_thread(_work))
     except ValueError as exc:
-        return RedirectResponse(f"/admin/users?error={quote(str(exc), safe='')}", status_code=303)
-
-    # Пароль показывается ровно один раз и только здесь: в базе он уже хешем,
-    # в журнал и в логи не попадает.
-    return templates.TemplateResponse(
-        "admin_users.html",
-        {"request": request, "current_user": admin, "people": people, "journal": journal,
-         "roles": [(users_mod.ROLE_RECRUITER, "Рекрутер"), (users_mod.ROLE_ADMIN, "Администратор")],
-         "error": "", "notice": "",
-         "issued": {"email": person.email, "password": password,
-                    "expires_at": person.password_expires_at}},
-    )
+        raise HTTPException(400, str(exc))
 
 
-@app.post("/admin/users/{user_id}/reset", response_class=HTMLResponse)
-async def admin_users_reset(
+@app.post("/api/users/{user_id}/reset")
+async def api_users_reset(
         request: Request, user_id: str,
         admin: "users_mod.User" = Depends(require_admin),
-):
+) -> JSONResponse:
     import asyncio
 
     if not _same_origin(request):
@@ -889,83 +924,85 @@ async def admin_users_reset(
 
     def _work():
         with registry_db.connect() as conn:
-            person = users_mod.get(conn, user_id)
-            if person is None:
-                return None, [], []
+            if users_mod.get(conn, user_id) is None:
+                return None
             users_mod.issue_temp_password(conn, user_id, temp_password=password, by=admin.email)
             person = users_mod.get(conn, user_id)
-            return person, users_mod.list_users(conn), users_mod.recent_logins(conn, limit=50)
+            data = _people_payload(conn)
+            data["me"] = admin.user_id
+            data["issued"] = {"email": person.email, "password": password,
+                              "expires": person.password_expires_at}
+            return data
 
-    person, people, journal = await asyncio.to_thread(_work)
-    if person is None:
+    data = await asyncio.to_thread(_work)
+    if data is None:
         raise HTTPException(404, f"Сотрудник {user_id} не найден")
-    return templates.TemplateResponse(
-        "admin_users.html",
-        {"request": request, "current_user": admin, "people": people, "journal": journal,
-         "roles": [(users_mod.ROLE_RECRUITER, "Рекрутер"), (users_mod.ROLE_ADMIN, "Администратор")],
-         "error": "", "notice": "",
-         "issued": {"email": person.email, "password": password,
-                    "expires_at": person.password_expires_at}},
-    )
+    return JSONResponse(data)
 
 
-@app.post("/admin/users/{user_id}/toggle")
-async def admin_users_toggle(
+@app.post("/api/users/{user_id}/toggle")
+async def api_users_toggle(
         request: Request, user_id: str,
         admin: "users_mod.User" = Depends(require_admin),
-):
+) -> JSONResponse:
     import asyncio
 
     if not _same_origin(request):
         raise HTTPException(403, "Запрос пришёл с чужой страницы")
 
-    def _work() -> str:
+    def _work():
         with registry_db.connect() as conn:
             person = users_mod.get(conn, user_id)
             if person is None:
-                return "Сотрудник не найден"
+                return "Сотрудник не найден", None
             if person.user_id == admin.user_id:
-                return "Нельзя отключить самого себя"
+                return "Нельзя отключить самого себя", None
             if person.is_active and person.is_admin and users_mod.count_admins(conn) <= 1:
-                # Иначе система останется без администратора и завести нового
-                # будет некому: экран доступов закрыт этой же ролью.
-                return "Это последний администратор — сначала назначьте другого"
+                # Иначе система останется без администратора, а вкладка
+                # доступов закрыта этой же ролью — завести нового некому.
+                return "Это последний администратор — сначала назначьте другого", None
             users_mod.set_active(conn, user_id, not person.is_active, by=admin.email)
-            return ""
+            data = _people_payload(conn)
+            data["me"] = admin.user_id
+            return "", data
 
-    problem = await asyncio.to_thread(_work)
-    tail = f"?error={quote(problem, safe='')}" if problem else "?notice=Готово"
-    return RedirectResponse(f"/admin/users{tail}", status_code=303)
+    problem, data = await asyncio.to_thread(_work)
+    if problem:
+        raise HTTPException(400, problem)
+    return JSONResponse(data)
 
 
-@app.post("/admin/users/{user_id}/role")
-async def admin_users_role(
-        request: Request, user_id: str,
-        role: str = Form(users_mod.ROLE_RECRUITER),
+@app.post("/api/users/{user_id}/role")
+async def api_users_role(
+        request: Request, user_id: str, payload: dict,
         admin: "users_mod.User" = Depends(require_admin),
-):
+) -> JSONResponse:
     import asyncio
 
     if not _same_origin(request):
         raise HTTPException(403, "Запрос пришёл с чужой страницы")
+    role = str(payload.get("role") or "")
 
-    def _work() -> str:
+    def _work():
         with registry_db.connect() as conn:
             person = users_mod.get(conn, user_id)
             if person is None:
-                return "Сотрудник не найден"
+                return "Сотрудник не найден", None
             if (person.is_admin and role != users_mod.ROLE_ADMIN
                     and users_mod.count_admins(conn) <= 1):
-                return "Это последний администратор — сначала назначьте другого"
+                return "Это последний администратор — сначала назначьте другого", None
             try:
                 users_mod.set_role(conn, user_id, role, by=admin.email)
             except ValueError as exc:
-                return str(exc)
-            return ""
+                return str(exc), None
+            data = _people_payload(conn)
+            data["me"] = admin.user_id
+            return "", data
 
-    problem = await asyncio.to_thread(_work)
-    tail = f"?error={quote(problem, safe='')}" if problem else "?notice=Роль изменена"
-    return RedirectResponse(f"/admin/users{tail}", status_code=303)
+    problem, data = await asyncio.to_thread(_work)
+    if problem:
+        raise HTTPException(400, problem)
+    return JSONResponse(data)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -992,6 +1029,7 @@ async def navigator(user: str = Depends(verify_creds)):
 
 @app.get("/api/navigator")
 async def api_navigator(
+        request: Request,
         active_only: bool = True,
         user: str = Depends(verify_creds),
 ) -> JSONResponse:
@@ -1006,7 +1044,19 @@ async def api_navigator(
 
     def _build() -> dict:
         with registry_db.connect() as conn:
-            return navigator_api.build_payload(conn, active_only=active_only)
+            payload = navigator_api.build_payload(conn, active_only=active_only)
+            # Кто смотрит и что ему можно. Раньше экран решал это сам: пароль
+            # администратора лежал в клиентском коде, а признак входа — в
+            # localStorage. Любой вошедший открывал админку через консоль.
+            # Теперь роль приходит с сервера и там же проверяется на роутах.
+            person = getattr(request.state, "user", None)
+            payload["me"] = {
+                "email": person.email if person else user,
+                "name": person.title if person else user,
+                "role": (person.roles[0] if person and person.roles else ""),
+                "isAdmin": bool(person and person.is_admin),
+            }
+            return payload
 
     payload = await asyncio.to_thread(_build)
     return JSONResponse(payload)

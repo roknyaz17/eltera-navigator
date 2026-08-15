@@ -316,11 +316,11 @@ ADMIN_ONLY = {
     ("POST", "/registry/dictionaries/confirm-all"),
     ("GET", "/registry/manual"),
     ("POST", "/registry/manual"),
-    ("GET", "/admin/users"),
-    ("POST", "/admin/users/create"),
-    ("POST", "/admin/users/{user_id}/reset"),
-    ("POST", "/admin/users/{user_id}/toggle"),
-    ("POST", "/admin/users/{user_id}/role"),
+    ("GET", "/api/users"),
+    ("POST", "/api/users"),
+    ("POST", "/api/users/{user_id}/reset"),
+    ("POST", "/api/users/{user_id}/toggle"),
+    ("POST", "/api/users/{user_id}/role"),
 }
 
 # Доступно любому вошедшему, включая рекрутера.
@@ -386,7 +386,7 @@ def test_password_change_is_available_to_everyone_logged_in():
 def test_last_admin_cannot_be_disabled():
     """Иначе система останется без администратора: экран доступов закрыт этой же ролью."""
     source = open(APP_SOURCE, encoding="utf-8").read()
-    handler = source.split("async def admin_users_toggle(")[1].split("\n@app.")[0]
+    handler = source.split("async def api_users_toggle(")[1].split("\n@app.")[0]
     assert "count_admins" in handler, "нет защиты от отключения последнего администратора"
     assert "Нельзя отключить самого себя" in handler
 
@@ -398,3 +398,28 @@ def test_manual_edits_record_author():
     assert "author" in handler
     assert "position_history" in handler, "ручные правки не пишутся в историю"
     assert "changed_by" in handler
+
+
+def test_people_data_is_not_in_navigator_payload():
+    """Список сотрудников и журнал входов не должны уезжать рекрутеру.
+
+    Данные лежат за отдельной ручкой /api/users, закрытой ролью админа,
+    а не в общем ответе /api/navigator, который получает каждый вошедший.
+    """
+    source = open(os.path.join(ROOT, "navigator_api.py"), encoding="utf-8").read()
+    for leak in ("login_audit", "list_users(", "password_hash"):
+        assert leak not in source, f"{leak} попал в общий ответ /api/navigator"
+
+
+def test_no_client_side_admin_password():
+    """Пароль администратора не может лежать в клиентском коде.
+
+    В рабочем шаблоне оставался ADMIN_PASS = '1207' из макета, а признак
+    входа в админку хранился в localStorage: любой вошедший рекрутер открывал
+    раздел через консоль браузера. Роль должна приходить с сервера.
+    """
+    template = open(os.path.join(ROOT, "templates", "navigator.html"), encoding="utf-8").read()
+    assert "ADMIN_PASS" not in template, "пароль администратора вернулся в клиентский код"
+    assert "1207" not in template, "демо-пароль макета вернулся в шаблон"
+    assert "eltera_navigator_admin_v1" not in template, "гейт админки снова в localStorage"
+    assert "DATA.me" in template, "экран не спрашивает роль у сервера"
