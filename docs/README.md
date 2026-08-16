@@ -26,6 +26,7 @@
 | Интеграции | [INTEGRATIONS.md](INTEGRATIONS.md) |
 | Требования к мобильной адаптации | [MOBILE.md](MOBILE.md) |
 | Переданный макет интерфейса | [FRONTEND-PACKAGE.md](FRONTEND-PACKAGE.md) |
+| Выкатка домена и HTTPS | [DEPLOY-TLS.md](DEPLOY-TLS.md) |
 | Известные ограничения и спорные места | [LIMITATIONS.md](LIMITATIONS.md) |
 | Вопросы, требующие согласования | [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) |
 | Что работает, а чего нет | [AS-IS-VS-TO-BE.md](AS-IS-VS-TO-BE.md) |
@@ -64,6 +65,12 @@
 |---|---|
 | [LIMITATIONS.md](LIMITATIONS.md) | временные решения, хрупкие места, спорное |
 | [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) | вопросы к заказчику: без ответов часть задач начинать нельзя |
+
+### Регламенты
+
+| Файл | О чём |
+|---|---|
+| [DEPLOY-TLS.md](DEPLOY-TLS.md) | перевод на поддомен и HTTPS: DNS, репетиция, шаги, откат, автопродление |
 
 ### Постановка задач
 

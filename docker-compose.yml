@@ -1,3 +1,13 @@
+# Имя проекта задано явно. По умолчанию compose берёт его из имени каталога,
+# а полные имена томов собирает как <имя проекта>_<том>: переименование каталога
+# или развёртывание копии рядом создало бы ПУСТЫЕ тома — реестр заявок с нуля
+# и Caddy без сертификата, то есть немедленный перевыпуск и упор в недельный
+# лимит Let's Encrypt. На боевом сервере проект уже называется eltera-bot
+# (каталог /opt/eltera-bot, сеть eltera-bot_eltrea-net) — строка ничего не
+# переименовывает, а фиксирует. Перед первым pull на другой машине сверить:
+#   docker volume ls | grep registry-data
+name: eltera-bot
+
 # Файловый лог приложения ротируется помесячно средствами loguru
 # (см. logging_config.py). Здесь ограничиваем ВТОРОЙ поток логов — stdout
 # контейнеров, который Docker пишет в /var/lib/docker/containers/*-json.log
@@ -17,7 +27,18 @@ services:
     restart: unless-stopped
     logging: *default-logging
     ports:
-      - "8000:8000"
+      # Адрес публикации порта — переключатель выкатки, живущий в .env, а не
+      # в этом файле. Закрытие прямого доступа делается ДОБАВЛЕНИЕМ одной
+      # строки APP_BIND_HOST=127.0.0.1 в .env, откат — её удалением. Возврат
+      # docker-compose.yml из git на роль отката не годится: он унёс бы заодно
+      # сервис caddy и объявление тома caddy-data, и ближайший
+      # `docker compose up -d --remove-orphans` убил бы HTTPS.
+      #
+      # Умолчание 0.0.0.0 повторяет то, как боевой сервер работает СЕЙЧАС:
+      # `git pull` не имеет права молча менять доступность боевого адреса.
+      # В .env.example стоит уже 127.0.0.1 — развёртывание «по образцу»
+      # не должно выставлять приложение в интернет.
+      - "${APP_BIND_HOST:-0.0.0.0}:8000:8000"
     environment:
       TZ: Europe/Moscow
       # База реестра заявок. Лежит в volume, а не в образе: пересборка
@@ -32,13 +53,72 @@ services:
     networks:
       - eltrea-net
 
+  # Обратный прокси и TLS. Конфиг — caddy/Caddyfile, регламент выкатки —
+  # docs/DEPLOY-TLS.md. Наружу приложение отдаётся только через него.
+  caddy:
+    image: caddy:2-alpine
+    container_name: eltrea-caddy
+    restart: unless-stopped
+    logging: *default-logging
+    # Второй переключатель выкатки. Профиль НЕ мешает поднять сервис по имени:
+    # `docker compose up -d --no-deps caddy` работает и без строки в .env —
+    # compose включает профиль сервиса, названного явно. Ровно поэтому и откат
+    # `docker compose rm -sf caddy` срабатывает после удаления строки.
+    # Настоящая роль строки COMPOSE_PROFILES=tls в .env другая: без неё
+    # `docker compose up -d --remove-orphans` снесёт контейнер прокси как
+    # «лишний» — команда обыденная, и HTTPS упадёт на ровном месте. Поэтому
+    # строка — часть выкатки, а не удобство, и её пропажу ловит внешняя проба
+    # (scripts/tls_watch.sh, docs/DEPLOY-TLS.md, раздел 5), а не звонок
+    # пользователя. Откат HTTPS: убрать строку и `docker compose rm -sf caddy`;
+    # файл при этом не редактируется и не возвращается из git.
+    profiles: ["tls"]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Только проброс: значения по умолчанию лежат в caddy/Caddyfile, чтобы
+      # не держать два списка умолчаний. Переменной нет в .env — в контейнер
+      # она не попадёт и сработает умолчание; переменная ПУСТАЯ — приедет
+      # пустой строкой и Caddy не разберёт конфиг. Не обнулять, комментировать.
+      - NAVIGATOR_DOMAIN
+      - ACME_EMAIL
+      - ACME_CA
+      - HSTS_MAX_AGE
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Сертификат, его ключ и ключ ACME-аккаунта. Терять нельзя: без тома
+      # Caddy перевыпускает сертификат при каждом пересоздании контейнера и
+      # упирается в лимит «5 одинаковых сертификатов в неделю».
+      - caddy-data:/data
+      - caddy-config:/config
+    healthcheck:
+      # Отдельный внутренний порт из Caddyfile: 80 отвечает редиректом, 443
+      # требует сертификата на имя, а тут нужен простой признак «процесс жив
+      # и конфиг загружен». Порт наружу не публикуется.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2020/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      - app
+    networks:
+      - eltrea-net
+
   prometheus:
     image: prom/prometheus:latest
     container_name: eltrea-prometheus
     restart: unless-stopped
     logging: *default-logging
     ports:
-      - "9090:9090"
+      # Третий, независимый переключатель. Закрытие мониторинга — отдельное
+      # окно работ (docs/DEPLOY-TLS.md, 9.1): оно не должно ни зависеть от
+      # выкатки TLS, ни откатываться вместе с ней. Умолчание повторяет
+      # текущее состояние сервера; в .env.example — уже 127.0.0.1.
+      # Скрейпу это безразлично: Prometheus ходит на app:8000 по внутренней
+      # docker-сети, Grafana — на prometheus:9090, публикация портов на
+      # межконтейнерное взаимодействие не влияет.
+      - "${MONITORING_BIND_HOST:-0.0.0.0}:9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       # Пароль для скрейпа /metrics. Файл создаётся при развёртывании:
@@ -61,9 +141,15 @@ services:
     restart: unless-stopped
     logging: *default-logging
     ports:
-      - "3000:3000"
+      - "${MONITORING_BIND_HOST:-0.0.0.0}:3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
+      # Именно :- , а НЕ :? . Форма ${GRAFANA_PASSWORD:?...} при незаполненной
+      # переменной валит не один сервис, а весь compose-проект: перестают
+      # работать `ps`, `logs` и команды отката — ровно в тот момент, когда они
+      # нужнее всего. Пустое значение здесь означает пароль admin; это
+      # некритично, пока порт 3000 не опубликован наружу (см. строку ports
+      # выше и docs/DEPLOY-TLS.md, 9.1).
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
@@ -83,3 +169,5 @@ volumes:
   prometheus-data:
   grafana-data:
   registry-data:
+  caddy-data:
+  caddy-config:
