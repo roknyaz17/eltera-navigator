@@ -924,12 +924,16 @@ function viewAside() {
   const anchor = S.sel.length ? cityOf(S.sel[0]) : null;
   const cities = DATA.cities.filter((c) => !term || (c.name + ' ' + (c.region || '')).toLowerCase().replace(/ё/g, 'е').indexOf(term) >= 0);
 
-  let html = '<aside class="appScroll navAside" style="flex:1 1 320px; max-width:100%; display:flex; flex-direction:column; gap:12px; position:sticky; top:14px; height:calc(100vh - 124px); min-height:520px; overflow:hidden; padding-right:2px;">';
+  /* Колонка ровно по высоте окна и со своей прокруткой. Раньше здесь стояли
+     min-height:520px и overflow:hidden: на нераскрытом окне колонка получалась
+     выше доступного места, и низ — тумблер «Соседние города» — просто срезался,
+     причём без полосы прокрутки, так что добраться до него было нечем. */
+  let html = '<aside class="appScroll navAside" style="flex:1 1 320px; max-width:100%; display:flex; flex-direction:column; gap:12px; position:sticky; top:14px; height:calc(100vh - 124px); min-height:0; overflow-y:auto; overflow-x:hidden; padding-right:2px;">';
 
   /* Города забирают всю свободную высоту, но не всю целиком: у панели фильтров
      под ними своя нижняя граница, иначе на невысоком экране она ужимается в
      полоску с одним видимым полем. Список городов внутри сам скроллится. */
-  html += '<section class="liquid-glass" style="border-radius:18px; padding:18px; flex:1 1 auto; min-height:170px; display:flex; flex-direction:column;">'
+  html += '<section class="liquid-glass" style="border-radius:18px; padding:18px; flex:1 1 auto; min-height:170px; display:flex; flex-direction:column; overflow:hidden;">'
     + '<div style="display:flex; align-items:baseline; justify-content:space-between; gap:10px;">'
     + '<h2 style="margin:0; font-size:15px; font-weight:600; letter-spacing:-.02em; color:#fff;">Города</h2>'
     + '<span style="font-size:11.5px; color:rgba(255,255,255,.45);">' + (S.sel.length ? 'выбрано ' + S.sel.length : 'все города') + '</span>'
@@ -947,7 +951,7 @@ function viewAside() {
       + '</div>';
   }
 
-  html += '<div class="appScroll cityList" data-scroll="cities" style="flex:1 1 auto; min-height:130px; overflow-y:auto; margin-top:10px; display:flex; flex-direction:column; gap:2px;">'
+  html += '<div class="appScroll cityList" data-scroll="cities" style="flex:1 1 auto; min-height:72px; overflow-y:auto; margin-top:10px; display:flex; flex-direction:column; gap:2px;">'
     + cities.map((c) => {
       const on = S.sel.indexOf(c.name) >= 0;
       const isNear = !on && near.indexOf(c.name) >= 0;
@@ -1241,7 +1245,7 @@ function viewAdmin() {
   ];
 
   let html = '<div style="padding-top:18px; display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;">'
-    + '<aside class="navAside" style="flex:1 1 320px; max-width:100%; display:flex; flex-direction:column; gap:12px; position:sticky; top:14px; height:calc(100vh - 124px); min-height:480px; overflow:hidden;">'
+    + '<aside class="navAside" style="flex:1 1 320px; max-width:100%; display:flex; flex-direction:column; gap:12px; position:sticky; top:14px; height:calc(100vh - 124px); min-height:480px; overflow-y:auto; overflow-x:hidden; padding-right:2px;">'
     + '<section class="liquid-glass" style="flex:none; border-radius:18px; padding:18px;">'
     + '<h2 style="margin:0; font-size:15px; font-weight:600; letter-spacing:-.02em; color:#fff;">Автопроверка</h2>'
     + '<p style="margin:6px 0 0; font-size:12.5px; line-height:1.55; color:rgba(255,255,255,.5);">Заявки проверяются и публикуются без человека. Чего не хватает — система сама запрашивает у заказчика.</p>'
