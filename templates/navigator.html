@@ -259,13 +259,14 @@ function recLadder(m) {
   if (!m || !m.tiers || m.tiers.length < 2) return '';
   return m.tiers.map((t) => t.minShifts + ' смен — ' + money(t.amount)).join(' · ');
 }
-/* Рекрутёру сумма приходит уже урезанной до его доли (см. apply_role_visibility
-   в navigator_api.py), поэтому здесь только подпись. Администратору наоборот —
-   показываем, сколько из выставленной суммы увидит рекрутёр. */
+/* Подпись видит только администратор: сколько из выставленной суммы получит
+   рекрутер. Самому рекрутеру не показываем ни долю, ни процент — назвав
+   процент, мы бы отдали и сумму контракта: она получается обратным умножением.
+   Процент для этого и не приходит: DATA.ratePercent у рекрутера пустой
+   (см. apply_role_visibility в navigator_api.py). */
 function recShareNote(m) {
   const pct = DATA.ratePercent;
   if (!m || !m.amount || !pct) return '';
-  if (DATA.ratesMasked) return 'ваша доля — ' + pct + ' % от суммы контракта';
   return 'рекрутер видит ' + money(Math.round(m.amount * pct / 100)) + ' (' + pct + ' %)';
 }
 

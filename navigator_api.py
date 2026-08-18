@@ -752,9 +752,11 @@ def _share(amount: Any, percent: float) -> Any:
 def apply_role_visibility(payload: Dict[str, Any], *, is_admin: bool) -> Dict[str, Any]:
     """Готовит payload под роль смотрящего. Администратору — всё как есть."""
     percent = recruiter_share_percent()
-    # Процент едет и администратору: по нему экран показывает, какую сумму
-    # увидит рекрутёр, — иначе выставленную сетку не с чем сверить.
-    payload["ratePercent"] = percent
+    # Процент — такой же секрет, как и сама сумма: зная долю, рекрутёр
+    # восстанавливает цену контракта обратным умножением, и всё сокрытие
+    # теряет смысл. Поэтому доля уезжает только администратору — ему она
+    # нужна, чтобы видеть, какую сумму получит рекрутёр из выставленной сетки.
+    payload["ratePercent"] = percent if is_admin else None
     payload["ratesMasked"] = not is_admin
     if is_admin:
         return payload

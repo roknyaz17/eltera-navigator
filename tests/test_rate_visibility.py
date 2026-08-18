@@ -97,6 +97,15 @@ def test_no_real_amount_anywhere_in_payload():
     assert "40000" not in repr(result)
 
 
+@pytest.mark.parametrize("percent", ["20", "35", "50"])
+def test_multiplier_is_not_recoverable_from_response(monkeypatch, percent):
+    """Ни доли, ни процента: иначе цена контракта считается обратным умножением."""
+    monkeypatch.setenv("RECRUITER_SHARE_PERCENT", percent)
+    result = navigator_api.apply_role_visibility(payload_with(30000), is_admin=False)
+    assert result["ratePercent"] is None
+    assert percent not in repr(result.get("ratePercent"))
+
+
 def test_candidate_rate_is_untouched():
     """Режется ставка рекрутёра, а не оплата кандидата за смену."""
     result = navigator_api.apply_role_visibility(payload_with(), is_admin=False)
@@ -116,10 +125,12 @@ def test_custom_percent_applies(monkeypatch):
     assert result["rows"][0]["rec"]["amount"] == 10500
 
 
-def test_masked_flag_is_set():
+def test_percent_never_reaches_recruiter():
+    """Процент — тот же секрет: зная долю, сумму контракта получают умножением."""
     result = navigator_api.apply_role_visibility(payload_with(), is_admin=False)
     assert result["ratesMasked"] is True
-    assert result["ratePercent"] == 20.0
+    assert result["ratePercent"] is None
+    assert "20" not in repr(result.get("ratePercent"))
 
 
 # -------------------------------------------------------------- администратор
@@ -162,7 +173,7 @@ def test_missing_amount_is_not_invented():
 
 def test_empty_payload_survives():
     assert navigator_api.apply_role_visibility({}, is_admin=False) == {
-        "ratePercent": 20.0, "ratesMasked": True,
+        "ratePercent": None, "ratesMasked": True,
     }
 
 
