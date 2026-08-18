@@ -259,6 +259,15 @@ function recLadder(m) {
   if (!m || !m.tiers || m.tiers.length < 2) return '';
   return m.tiers.map((t) => t.minShifts + ' смен — ' + money(t.amount)).join(' · ');
 }
+/* Рекрутёру сумма приходит уже урезанной до его доли (см. apply_role_visibility
+   в navigator_api.py), поэтому здесь только подпись. Администратору наоборот —
+   показываем, сколько из выставленной суммы увидит рекрутёр. */
+function recShareNote(m) {
+  const pct = DATA.ratePercent;
+  if (!m || !m.amount || !pct) return '';
+  if (DATA.ratesMasked) return 'ваша доля — ' + pct + ' % от суммы контракта';
+  return 'рекрутер видит ' + money(Math.round(m.amount * pct / 100)) + ' (' + pct + ' %)';
+}
 
 function ageText(r) {
   if (r.ageFrom && r.ageTo) return r.ageFrom + '–' + r.ageTo;
@@ -1139,6 +1148,7 @@ function card(r) {
     + (m
       ? '<div style="font-size:17px; font-weight:600; letter-spacing:-.02em; color:' + (m.expired ? '#D9A441' : '#fff') + '; margin-top:4px; font-variant-numeric:tabular-nums;">' + esc(recText(r)) + '</div>'
         + '<div style="font-size:11px; color:rgba(255,255,255,.45); margin-top:3px; line-height:1.35;">' + esc(recFormula(m) + (m.payout ? ' · ' + m.payout : '')) + '</div>'
+        + (recShareNote(m) ? '<div style="font-size:11px; color:rgba(255,255,255,.45); margin-top:3px; line-height:1.35;">' + esc(recShareNote(m)) + '</div>' : '')
         + (m.expired ? '<div style="font-size:11px; color:#D9A441; margin-top:3px;">сетка истекла ' + esc(m.validTo) + ' — обновите</div>' : '')
       : '<div style="display:flex; align-items:center; gap:6px; margin-top:6px;"><span style="width:6px; height:6px; border-radius:9999px; background:#D9A441; box-shadow:0 0 8px #D9A441;"></span><span style="font-size:12.5px; color:#D9A441;">не задана</span></div>')
     + '</div></div>';
@@ -1886,6 +1896,7 @@ function viewDetail(d) {
       ? '<div style="font-size:18px; font-weight:600; letter-spacing:-.02em; color:#fff; margin-top:4px;">' + esc(recText(d)) + '</div>'
         + '<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:6px 14px; margin-top:8px;">'
         + [['За что', recFormula(m)], ['Лестница по сменам', recLadder(m)],
+           ['Как считается', recShareNote(m)],
            ['Когда выплачивается', m.payout], ['Надбавки и оговорки', m.note],
            ['Действует до', m.validTo ? m.validTo + (m.expired ? ' — срок истёк' : '') : ''],
            ['Оговорка', m.stepNote]]

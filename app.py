@@ -1072,13 +1072,16 @@ async def api_navigator(
             # localStorage. Любой вошедший открывал админку через консоль.
             # Теперь роль приходит с сервера и там же проверяется на роутах.
             person = getattr(request.state, "user", None)
+            is_admin = bool(person and person.is_admin)
             payload["me"] = {
                 "email": person.email if person else user,
                 "name": person.title if person else user,
                 "role": (person.roles[0] if person and person.roles else ""),
-                "isAdmin": bool(person and person.is_admin),
+                "isAdmin": is_admin,
             }
-            return payload
+            # Ставка рекрутёра режется до его доли здесь, а не в шаблоне:
+            # этот JSON открывается в браузере рекрутёра целиком.
+            return navigator_api.apply_role_visibility(payload, is_admin=is_admin)
 
     payload = await asyncio.to_thread(_build)
     return JSONResponse(payload)

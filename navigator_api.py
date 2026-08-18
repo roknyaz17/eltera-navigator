@@ -710,6 +710,75 @@ def next_run(now: datetime) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
+# ----------------------------------------------------------- что видно рекрутёру
+#
+# Сумма в сетке — это цена контракта с заказчика за выведенного кандидата
+# (20 000, 30 000, 40 000). Рекрутёру причитается доля от неё, и знать полную
+# сумму ему не нужно: зная её, он знает и маржу агентства.
+#
+# Режется на сервере, до отдачи JSON. Спрятать сумму в вёрстке нельзя —
+# /api/navigator открывается в браузере рекрутёра, и настоящая цифра лежала бы
+# в ответе целиком.
+
+DEFAULT_RECRUITER_SHARE_PERCENT = 20.0
+
+
+def recruiter_share_percent() -> float:
+    """Доля контракта, которую видит рекрутёр, в процентах.
+
+    Настраивается RECRUITER_SHARE_PERCENT. Мусор и значения вне (0; 100]
+    игнорируются: показать из-за опечатки в окружении больше, чем причитается,
+    хуже, чем не применить настройку.
+    """
+    raw = os.getenv("RECRUITER_SHARE_PERCENT", "").strip()
+    if not raw:
+        return DEFAULT_RECRUITER_SHARE_PERCENT
+    try:
+        value = float(raw.replace(",", "."))
+    except ValueError:
+        return DEFAULT_RECRUITER_SHARE_PERCENT
+    if not 0 < value <= 100:
+        return DEFAULT_RECRUITER_SHARE_PERCENT
+    return value
+
+
+def _share(amount: Any, percent: float) -> Any:
+    """Доля от суммы, округлённая до рубля. «Не задана» остаётся «не задана»."""
+    if not isinstance(amount, (int, float)) or isinstance(amount, bool):
+        return amount
+    return int(round(amount * percent / 100.0))
+
+
+def apply_role_visibility(payload: Dict[str, Any], *, is_admin: bool) -> Dict[str, Any]:
+    """Готовит payload под роль смотрящего. Администратору — всё как есть."""
+    percent = recruiter_share_percent()
+    # Процент едет и администратору: по нему экран показывает, какую сумму
+    # увидит рекрутёр, — иначе выставленную сетку не с чем сверить.
+    payload["ratePercent"] = percent
+    payload["ratesMasked"] = not is_admin
+    if is_admin:
+        return payload
+
+    for row in payload.get("rows") or []:
+        rec = row.get("rec")
+        if not rec:
+            continue
+        rec["amount"] = _share(rec.get("amount"), percent)
+        rec["tiers"] = [
+            dict(tier, amount=_share(tier.get("amount"), percent))
+            for tier in rec.get("tiers") or []
+        ]
+
+    # Сетка целиком и журнал её правок — рабочий стол администратора, где
+    # суммы лежат неурезанными. Рекрутёру этот блок не нужен вовсе, а вкладку
+    # «Ставки» ему всё равно не открыть.
+    block = payload.get("rates")
+    if isinstance(block, dict):
+        block["rules"] = []
+        block["history"] = []
+    return payload
+
+
 # ------------------------------------------------------------------ сборка всего
 
 def build_payload(conn, active_only: bool = True) -> Dict[str, Any]:
