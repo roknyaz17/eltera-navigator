@@ -195,6 +195,65 @@ function toast(text) {
   render();
 }
 
+/* Приложение отдаётся по http, а navigator.clipboard существует только в
+   защищённом контексте: обращение к .writeText падает TypeError. Раньше это
+   исключение глушилось пустым catch — тост «Скопировано» показывался поверх
+   пустого буфера, и в мессенджер вставлять было нечего.
+
+   Запасной путь — скрытая textarea и document.execCommand('copy'). Он работает
+   только внутри обработчика пользовательского клика, поэтому copyText должен
+   вызываться из действия кнопки синхронно, без await и таймеров перед ним.
+   Возвращаем промис с честным результатом: тост зависит от него. */
+function copyText(text) {
+  const value = String(text == null ? '' : text);
+  if (!value) return Promise.resolve(false);
+
+  const legacy = () => {
+    const ta = document.createElement('textarea');
+    ta.value = value;
+    // readonly — чтобы на телефоне не выезжала клавиатура; поле не прячем через
+    // display:none и не уводим за экран прокруткой: невидимое или отсутствующее
+    // в потоке поле не выделяется и execCommand возвращает false.
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed; top:0; left:0; width:1px; height:1px; padding:0; border:none; outline:none; box-shadow:none; background:transparent; opacity:0;';
+    document.body.appendChild(ta);
+    const sel = window.getSelection ? window.getSelection() : null;
+    const prev = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+    let ok = false;
+    try {
+      ta.focus();
+      ta.select();
+      if (ta.setSelectionRange) ta.setSelectionRange(0, value.length);  // iOS игнорирует select() на readonly
+      ok = document.execCommand('copy');
+    } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    if (sel && prev) { sel.removeAllRanges(); sel.addRange(prev); }
+    return ok;
+  };
+
+  if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+    // Даже в https запись отваливается, если вкладка не в фокусе или
+    // пользователь запретил доступ к буферу, — тогда доигрываем через textarea.
+    try { return navigator.clipboard.writeText(value).then(() => true, () => legacy()); }
+    catch (e) { return Promise.resolve(legacy()); }
+  }
+  return Promise.resolve(legacy());
+}
+
+/* Буфер может быть закрыт настройками браузера — тогда единственное, что мы
+   можем предложить, это выделить текст под Ctrl+C. Выделять нужно после
+   toast(): он перерисовывает страницу целиком и убивает старое выделение. */
+function selectNode(id) {
+  const node = document.getElementById(id);
+  if (!node || !window.getSelection || !document.createRange) return false;
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  return true;
+}
+
 function spaced(n) {
   return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
@@ -868,8 +927,18 @@ function render() {
   document.querySelectorAll('[data-scroll]').forEach((el) => { scrolls[el.dataset.scroll] = el.scrollTop; });
   const active = document.activeElement;
   const focusId = active && active.dataset ? active.dataset.fid : null;
-  const selStart = active && active.selectionStart != null ? active.selectionStart : null;
-  const selEnd = active && active.selectionEnd != null ? active.selectionEnd : null;
+  /* selectionStart недоступен у number, email и date: спецификация велит вернуть
+     null, часть браузеров бросает исключение. Молча терять позицию нельзя —
+     focus() на только что созданном поле ставит каретку в начало строки, и
+     набранное «30» превращается в «03». */
+  let selStart = null;
+  let selEnd = null;
+  try {
+    if (active && active.selectionStart != null) {
+      selStart = active.selectionStart;
+      selEnd = active.selectionEnd;
+    }
+  } catch (e) {}
 
   app.innerHTML = view();
 
@@ -882,9 +951,16 @@ function render() {
     const el = document.querySelector('[data-fid="' + focusId + '"]');
     if (el) {
       el.focus();
-      if (selStart != null && el.setSelectionRange) {
-        try { el.setSelectionRange(selStart, selEnd); } catch (e) {}
+      const end = el.value == null ? 0 : String(el.value).length;
+      const from = selStart == null ? end : selStart;   // позиция неизвестна — дописываем в конец
+      const to = selEnd == null ? from : selEnd;
+      let restored = false;
+      if (el.setSelectionRange) {
+        try { el.setSelectionRange(from, to); restored = true; } catch (e) {}
       }
+      // Поля без поддержки выделения (number и прочие) — каретку в конец
+      // перестановкой значения: это единственный способ, который они понимают.
+      if (!restored && end) { const v = el.value; el.value = ''; el.value = v; }
     }
   }
 }
@@ -1037,7 +1113,11 @@ function viewAside() {
     + '<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:10px; margin-top:14px;">'
     + numFilters.map((n) => '<label style="display:block;">'
       + '<span style="display:block; font-size:11.5px; color:rgba(255,255,255,.5); margin-bottom:5px;">' + esc(n.label) + '</span>'
-      + '<input type="number" class="fLine" data-fid="' + n.key + '" data-on="' + n.key + '" placeholder="' + attr(n.ph) + '" value="' + attr(n.value) + '" style="' + INPUT_S + '"></label>').join('')
+      // type=number отдаёт null вместо позиции каретки, поэтому после
+      // перерисовки списка она уезжала в начало и «30» набиралось как «03».
+      // Обычное текстовое поле позицию отдаёт; цифровую клавиатуру на телефоне
+      // даёт inputmode, лишние символы отсекает onFieldChange.
+      + '<input type="text" inputmode="numeric" autocomplete="off" class="fLine" data-fid="' + n.key + '" data-on="' + n.key + '" placeholder="' + attr(n.ph) + '" value="' + attr(n.value) + '" style="' + INPUT_S + '"></label>').join('')
     + selFilters.map(selectHtml).join('')
     + '</div>'
     + (S.moreOpen ? '<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:10px; margin-top:10px;">' + moreFilters.map(selectHtml).join('') + '</div>' : '')
@@ -1954,7 +2034,7 @@ function viewCandidate(r) {
     + '<div style="display:flex; align-items:center; gap:8px; padding:10px 12px; border-radius:12px; background:rgba(164,244,253,.1); border:1px solid rgba(164,244,253,.3);">'
     + '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#A4F4FD" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 7v5c0 4.4 3.2 8.3 8 9 4.8-.7 8-4.6 8-9V7z"></path></svg>'
     + '<span style="font-size:12.5px; color:#A4F4FD;">' + esc(employer(r) || 'работодатель в тексте не называется') + '</span></div>'
-    + '<pre style="margin:14px 0 0; padding:16px; border-radius:12px; background:rgba(10,15,30,.6); border:1px solid rgba(255,255,255,.1); font-family:\'Inter\',system-ui,sans-serif; font-size:13.5px; font-weight:400; line-height:1.7; color:#E6F2FF; white-space:pre-wrap; word-break:break-word;">' + esc(gen.text) + '</pre>';
+    + '<pre id="candidateText" style="margin:14px 0 0; padding:16px; border-radius:12px; background:rgba(10,15,30,.6); border:1px solid rgba(255,255,255,.1); font-family:\'Inter\',system-ui,sans-serif; font-size:13.5px; font-weight:400; line-height:1.7; color:#E6F2FF; white-space:pre-wrap; word-break:break-word;">' + esc(gen.text) + '</pre>';
 
   if (media.length) {
     inner += '<div style="margin-top:16px;"><div style="display:flex; align-items:center; gap:9px;">'
@@ -2136,9 +2216,13 @@ const ACTIONS = {
   mCopy: () => {
     const r = rowById(S.modal);
     const gen = r ? candidateText(r, S.picks) : { text: '' };
-    try { navigator.clipboard.writeText(gen.text); } catch (e) {}
-    S.copied = true;
-    toast('Текст скопирован — контрагент, объект и ставка рекрутера вырезаны');
+    copyText(gen.text).then((ok) => {
+      S.copied = ok;
+      toast(ok
+        ? 'Текст скопирован — контрагент, объект и ставка рекрутера вырезаны'
+        : 'Буфер обмена недоступен — текст выделен, скопируйте Ctrl+C');
+      if (!ok) selectNode('candidateText');
+    });
   },
   pickMedia: (key) => {
     const next = Object.assign({}, S.picks);
@@ -2154,19 +2238,10 @@ const ACTIONS = {
   copyIssued: () => {
     const node = document.getElementById('issuedPass');
     if (!node) return;
-    const text = node.textContent || '';
-    // Приложение отдаётся по http, где navigator.clipboard недоступен,
-    // поэтому падаем на выделение текста — скопировать можно вручную.
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(text).then(() => toast('Пароль скопирован'),
-        () => toast('Скопируйте вручную — буфер недоступен'));
-    } else {
-      const range = document.createRange();
-      range.selectNodeContents(node);
-      const sel = window.getSelection();
-      sel.removeAllRanges(); sel.addRange(range);
-      toast('Выделено — скопируйте сочетанием клавиш');
-    }
+    copyText(node.textContent || '').then((ok) => {
+      toast(ok ? 'Пароль скопирован' : 'Буфер недоступен — пароль выделен, скопируйте Ctrl+C');
+      if (!ok) selectNode('issuedPass');
+    });
   },
   userCreate: () => {
     const f = S.userForm;
@@ -2226,8 +2301,9 @@ const ACTIONS = {
   outCopy: (index) => {
     const o = computeOutreach()[Number(index)];
     if (!o) return;
-    try { navigator.clipboard.writeText(o.text); } catch (e) {}
-    toast('Текст запроса скопирован — ' + o.cp);
+    copyText(o.text).then((ok) => toast(ok
+      ? 'Текст запроса скопирован — ' + o.cp
+      : 'Буфер обмена недоступен — выделите текст запроса и скопируйте Ctrl+C'));
   },
   outSend: () => toast('Отправка не настроена: в .env нет TELEGRAM_BOT_TOKEN'),
 
@@ -2300,6 +2376,10 @@ document.addEventListener('click', (e) => {
    догоняется с небольшой задержкой: значение в состоянии обновляется сразу,
    перерисовка — когда пальцы остановились. */
 const TYPED_KEYS = ['q', 'citySearch', 'rateMin', 'ageCand'];
+/* Поля, где браузер раньше сам не пускал буквы (были type=number): фильтры
+   сравнивают значение через Number, «45 лет» превратилось бы в NaN и молча
+   отключило фильтр — поэтому отсекаем лишнее сами. */
+const NUMERIC_KEYS = ['rateMin', 'ageCand'];
 let _typingTimer = null;
 
 function onFieldChange(el) {
@@ -2335,7 +2415,18 @@ function onFieldChange(el) {
   }
   if (key === 'delPass') { setState({ delPass: value, delErr: false }); return; }
   if (TYPED_KEYS.indexOf(key) >= 0) {
-    S[key] = value;
+    let clean = value;
+    if (NUMERIC_KEYS.indexOf(key) >= 0) {
+      clean = value.replace(/\D+/g, '');
+      if (clean !== value) {
+        // Возвращаем очищенное значение сразу, не дожидаясь перерисовки, и
+        // сдвигаем каретку на число выброшенных символов — иначе она прыгает.
+        const at = el.selectionStart == null ? clean.length : Math.max(0, el.selectionStart - (value.length - clean.length));
+        el.value = clean;
+        if (el.setSelectionRange) { try { el.setSelectionRange(at, at); } catch (e) {} }
+      }
+    }
+    S[key] = clean;
     if (_typingTimer) clearTimeout(_typingTimer);
     _typingTimer = setTimeout(() => { _resetList = true; render(); }, 140);
     return;
