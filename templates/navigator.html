@@ -117,7 +117,7 @@ const S = {
   citySearch: '',
   q: '',
   rateMin: '', recPct: '', ageCand: '',
-  fRec: '', fHouse: '', fMeals: '', fCit: '', fGender: '', fMed: '', fSb: '', fSched: '',
+  fRec: '', fHouse: '', fMeals: '', fCit: '', fEth: '', fGender: '', fMed: '', fSb: '', fSched: '',
   scope: 'all',
   adminTab: 'exc',
   // Доступы грузятся отдельной ручкой и только для администратора: список
@@ -554,7 +554,10 @@ function candidateText(r, picked) {
   if (req.length) L.push('Требуются ' + req.join(', ') + '.');
   /* Поле «Требования» в реестре — сырая строка источника («РФ (Кавказ МОЖНО,
      Цыгане запрет), М 18-55»). Кандидату такое не отправляем: пол, возраст и
-     гражданство уже сказаны строкой выше, а остальное видно в «Подробнее». */
+     гражданство уже сказаны строкой выше, а остальное видно в «Подробнее».
+     Разобранное r.eth сюда не добавлять по той же причине, только сильнее:
+     это ограничение по национальности, и отправлять его человеку, которого
+     оно касается, мы не будем. Оно живёт в фильтре и в карточке рекрутёра. */
 
   if (r.house.st === 'yes') {
     const h = r.house, parts = [];
@@ -632,6 +635,35 @@ function pass(r) {
 
   if (S.fMeals === 'yes' && ['free', 'deduct', 'paid', 'yes'].indexOf(r.meals.st) < 0) return false;
   if (S.fMeals === 'free' && r.meals.st !== 'free') return false;
+/* ---- ограничения по национальности: только внутрь, кандидату не уходит ---- */
+/* Заказчики пишут «строго не Кавказ» и «СТРОГО НЕ ЦЫГАН» открытым текстом, и
+   рекрутёру это знать надо — иначе человека везут на объект, где ему откажут
+   на проходной. Но в candidateText эта строка не попадает и попасть не должна:
+   там текст, который уходит самому кандидату. */
+const ETH_LABEL = {
+  kav: { ban: 'Кавказ — запрет', women: 'Кавказ — только женщин', ok: 'Кавказ — можно' },
+  gyp: { ban: 'цыгане — запрет', women: 'цыгане — только женщин', ok: 'цыгане — можно' }
+};
+
+function ethState(r, key) {
+  return ((r.eth || {})[key] || {}).st || 'na';
+}
+
+function ethText(r) {
+  return ['kav', 'gyp'].map((k) => ETH_LABEL[k][ethState(r, k)] || '').filter(Boolean).join(', ');
+}
+
+/* То же самое, но с дословной цитатой из заявки: разбор эвристический, и
+   рекрутёр должен видеть, из какой формулировки он сделан. */
+function ethDetail(r) {
+  return ['kav', 'gyp'].map((k) => {
+    const label = ETH_LABEL[k][ethState(r, k)];
+    if (!label) return '';
+    const note = ((r.eth || {})[k] || {}).note;
+    return label + (note ? ' («' + note + '»)' : '');
+  }).filter(Boolean).join('; ');
+}
+
   if (S.fMeals === 'no' && r.meals.st !== 'no') return false;
 
   if (S.fCit) {
@@ -679,6 +711,21 @@ function sorted(rows) {
     const da = hasPoint(ca) ? dist(anchor, ca) : 1e9;
     const db = hasPoint(cb) ? dist(anchor, cb) : 1e9;
     return da - db;
+  if (S.fEth) {
+    const kav = ethState(r, 'kav'), gyp = ethState(r, 'gyp');
+    // Молчание заявки — это «не написано», а не «можно»: про Кавказ молчат
+    // две трети позиций. Из подбора мы их не выкидываем (иначе фильтр съест
+    // почти всю выдачу), но и за разрешение не выдаём — в карточке у них
+    // пусто, и это повод спросить заказчика, а не везти человека наугад.
+    if (S.fEth === 'kav' && kav === 'ban') return false;
+    if (S.fEth === 'gyp' && gyp === 'ban') return false;
+    // «Прямо разрешено» — это только те, где заказчик написал «можно».
+    // «Можно женщин» сюда входит: это разрешение, просто с оговоркой,
+    // а пол отсекается отдельным фильтром.
+    if (S.fEth === 'kavOk' && ['ok', 'women'].indexOf(kav) < 0) return false;
+    if (S.fEth === 'ban' && kav !== 'ban' && gyp !== 'ban') return false;
+  }
+
   });
   else if (S.sort === 'rec') out.sort((a, b) => recAmount(rec(b)) - recAmount(rec(a)));
   else out.sort((a, b) => (b.rate || 0) - (a.rate || 0));
@@ -1159,6 +1206,16 @@ function viewMain() {
     + '<span style="position:absolute; left:13px; top:50%; transform:translateY(-50%); color:rgba(255,255,255,.45); display:flex;">' + SEARCH_ICON + '</span>'
     + '<input type="text" class="fLine" data-fid="q" data-on="q" placeholder="Профессия, требование, контрагент" value="' + attr(S.q) + '" style="width:100%; height:38px; padding:0 14px 0 36px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:13px; outline:none;">'
     + '</div>'
+    // Отдельным полем, а не пунктом в «Гражданстве»: и Кавказ, и цыгане —
+    // граждане РФ, и подмешивать их к кодам гражданства значит врать в
+    // карточке («Гражданство: РФ, Кавказ») и ломать разбор citsRaw.
+    { label: 'Кавказ / цыгане', value: S.fEth, key: 'fEth', opts: [
+      opt('', 'не важно'),
+      opt('kav', 'кандидат с Кавказа'),
+      opt('kavOk', 'с Кавказа — где прямо разрешено'),
+      opt('gyp', 'кандидат-цыган'),
+      opt('ban', 'где написан запрет')
+    ] },
     + '<select data-on="sort" style="height:38px; padding:0 12px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12.5px; outline:none; cursor:pointer;">'
     + sorts.map((s) => '<option value="' + s[0] + '"' + (S.sort === s[0] ? ' selected' : '') + '>' + esc(s[1]) + '</option>').join('')
     + '</select></div>';
@@ -1204,7 +1261,9 @@ function card(r) {
   const terms = [
     Object.assign({ icon: HOUSE_ICON }, field('Проживание', houseText(r), houseState(r))),
     Object.assign({ icon: MEAL_ICON }, field('Питание', mealsText(r), r.meals.st === 'na' ? 'na' : (r.meals.st === 'no' ? 'no' : 'yes'))),
-    Object.assign({ icon: CIT_ICON }, field('Гражданство', r.cits.join(', '), r.cits.length ? 'yes' : 'na'))
+    Object.assign({ icon: CIT_ICON }, field('Гражданство',
+      [r.cits.join(', '), ethText(r)].filter(Boolean).join(' · '),
+      (r.cits.length || ethText(r)) ? 'yes' : 'na'))
   ];
   const chips = [
     r.gender,
@@ -2008,6 +2067,7 @@ function viewDetail(d) {
     inner += '<div style="margin-top:16px;"><div style="display:flex; align-items:center; gap:9px;">'
       + '<span style="font-size:11px; color:rgba(255,255,255,.45);">Как пришло от заказчика</span>'
       + '<span style="flex:1; height:1px; background:rgba(255,255,255,.1);"></span></div>'
+      field('Кавказ / цыгане', ethDetail(d), ethDetail(d) ? 'yes' : 'na'),
       + '<pre style="margin:8px 0 0; padding:14px; border-radius:12px; background:rgba(10,15,30,.6); border:1px solid rgba(255,255,255,.1); font-family:\'Inter\',system-ui,sans-serif; font-size:12.5px; font-weight:400; line-height:1.65; color:rgba(255,255,255,.75); white-space:pre-wrap; word-break:break-word;">' + esc(rawText) + '</pre></div>';
   }
 
@@ -2186,7 +2246,7 @@ function reloadData() {
 
 /* ================================ действия ================================ */
 
-const FILTER_KEYS = ['q', 'rateMin', 'ageCand', 'fRec', 'fHouse', 'fMeals', 'fCit', 'fGender', 'fMed', 'fSb', 'fSched', 'sort'];
+const FILTER_KEYS = ['q', 'rateMin', 'ageCand', 'fRec', 'fHouse', 'fMeals', 'fCit', 'fEth', 'fGender', 'fMed', 'fSb', 'fSched', 'sort'];
 
 function setFilter(patch) { _resetList = true; setState(patch); }
 
@@ -2200,7 +2260,7 @@ const ACTIONS = {
   toggleRadius: () => setFilter({ radius: S.radius ? 0 : 50 }),
   setRadius: (km) => setFilter({ radius: Number(km) }),
   toggleMore: () => setState({ moreOpen: !S.moreOpen }),
-  resetFilters: () => setFilter({ rateMin: '', recPct: '', ageCand: '', fRec: '', fHouse: '', fMeals: '', fCit: '', fGender: '', fMed: '', fSb: '', fSched: '' }),
+  resetFilters: () => setFilter({ rateMin: '', recPct: '', ageCand: '', fRec: '', fHouse: '', fMeals: '', fCit: '', fEth: '', fGender: '', fMed: '', fSb: '', fSched: '' }),
   setScope: (key) => setFilter({ scope: key }),
 
   openText: (id) => setState({ modal: id, copied: false }),
