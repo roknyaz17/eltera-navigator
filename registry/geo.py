@@ -179,6 +179,10 @@ REGION_ALIASES: Dict[str, str] = {
     "екатеринбург": "Свердловская область",
     "казань": "Республика Татарстан",
     "нижний новгород": "Нижегородская область",
+    # Район в графе региона. Район — часть области, а не отдельный регион:
+    # без этой строки «Истринский р-н» встаёт в список отдельной областью с
+    # одной позицией, и в «Москве и области» её не найти.
+    "истринский район": MOSCOW_REGION,
 }
 
 # Родовые слова названия: внутри строки остаются строчными («Тульская
@@ -186,7 +190,13 @@ REGION_ALIASES: Dict[str, str] = {
 _REGION_GENERIC = {"область", "край", "округ", "республика", "автономный", "район", "и"}
 
 # Сокращения, которые встречаются в заявках наравне с полным словом.
-_REGION_ABBR = {"обл": "область", "респ": "республика"}
+_REGION_ABBR = {"обл": "область", "респ": "республика", "р-н": "район", "рн": "район"}
+
+
+def _bare(word: str) -> str:
+    """Слово без обрамляющей пунктуации: «обл.» → «обл», «(якутия)» → «якутия».
+    Дефис внутри слова остаётся: «р-н» — это одно слово, а не два."""
+    return word.lower().replace("ё", "е").strip(" .,()")
 
 
 def _region_key(value: str) -> str:
@@ -197,13 +207,13 @@ def _region_key(value: str) -> str:
 
 
 def _region_word(word: str, first: bool) -> str:
-    core = re.sub(r"[\W\d_]", "", word, flags=re.UNICODE).lower().replace("ё", "е")
+    bare = _bare(word)
     # ХМАО, ЯНАО, МО — аббревиатуры, а не «Хмао»: регистр не трогаем.
-    if word.isupper() and 2 <= len(core) <= 4 and core not in _REGION_ABBR:
+    if word.isupper() and 2 <= len(bare) <= 4 and bare not in _REGION_ABBR:
         return word
-    # «обл.» и «область» должны выглядеть одинаково, иначе в списке появятся
-    # две строки на одну область.
-    lowered = _REGION_ABBR.get(core, word.lower().strip(" ."))
+    # «обл.» и «область», «р-н» и «район» должны выглядеть одинаково, иначе в
+    # списке появятся две строки на одну область.
+    lowered = _REGION_ABBR.get(bare, word.lower().strip(" ."))
     if not first and lowered in _REGION_GENERIC:
         return lowered
     return re.sub(r"[^\W\d_]", lambda m: m.group(0).upper(), lowered, count=1)
