@@ -121,6 +121,38 @@ filters.forEach(([key, value]) => {
   S.fSched = '';
 });
 
+/* --- области ---
+ * Число рядом с областью в панели обещает, сколько позиций покажет клик по
+ * ней. Обещание проверяем прямо здесь: счётчик считает сервер (regions_block),
+ * а фильтрует браузер (passGeo), и разойтись они не имеют права. */
+const regionCounts = {};
+(DATA.regions || []).forEach((x) => {
+  S.regions = [x.name];
+  const got = check('область ' + (x.name || 'не указана'), () => DATA.rows.filter(sandbox.pass).length);
+  regionCounts[x.name || '(не указана)'] = got;
+  if (got !== x.count) problems.push('область «' + (x.name || 'не указана') + '»: в панели ' + x.count + ', в выдаче ' + got);
+  S.regions = [];
+});
+const regionSum = Object.keys(regionCounts).reduce((n, k) => n + regionCounts[k], 0);
+if (DATA.regions && DATA.regions.length && regionSum !== DATA.rows.length) {
+  problems.push('области покрывают ' + regionSum + ' позиций из ' + DATA.rows.length + ' — часть не попадает ни в одну');
+}
+
+/* Область и город складываются, а не пересекаются: выбор города из другой
+ * области не должен вычитать из выдачи. */
+if ((DATA.regions || []).length > 1) {
+  const first = DATA.regions[0], other = DATA.cities.find((c) => c.region !== first.name);
+  if (other) {
+    S.regions = [first.name]; S.sel = [other.name];
+    const both = check('область + город из другой области', () => DATA.rows.filter(sandbox.pass).length);
+    if (both !== first.count + other.count) {
+      problems.push('область «' + first.name + '» + город «' + other.name + '»: ждали '
+        + (first.count + other.count) + ', получили ' + both);
+    }
+    S.regions = []; S.sel = [];
+  }
+}
+
 /* --- города и радиус --- */
 const withCoords = DATA.cities.filter((c) => typeof c.lat === 'number');
 S.sel = ['Москва']; S.radius = 50;
@@ -151,6 +183,7 @@ console.log('с материалами (кнопка «Фото объекта»
 console.log('соседние города 50 км от Москвы:', near50.join(', ') || '—');
 console.log('соседние города 100 км от Москвы:', near100.join(', ') || '—');
 console.log('счётчики фильтров:', JSON.stringify(counts, null, 0));
+console.log('позиций по областям:', JSON.stringify(regionCounts, null, 0));
 console.log('утечки контрагента/объекта в текст кандидату:', leaked.length ? leaked.join('; ') : 'нет');
 console.log('размер разметки экрана подбора:', search.length, 'символов');
 console.log('\n--- пример текста кандидату ---\n' + texts[0].text);

@@ -20,6 +20,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from registry import dictionaries as dicts
 from registry import geo, rates
 from registry.labels import SOURCE_TITLES
 
@@ -184,7 +185,6 @@ def parse_citizenship(raw: Optional[str]) -> List[str]:
     return out
 
 
-def normalize_gender(raw: Optional[str]) -> str:
 # ------------------------------------------- ограничения по национальности
 #
 # Заказчики пишут это прямым текстом: «строго не Кавказ», «СТРОГО НЕ ЦЫГАН»,
@@ -308,6 +308,7 @@ def parse_ethnic_limits(*sources: Optional[str]) -> Dict[str, Dict[str, str]]:
     return out
 
 
+def normalize_gender(raw: Optional[str]) -> str:
     text = _s(raw).lower().replace("ё", "е")
     if not text:
         return ""
@@ -468,15 +469,42 @@ def media_block(row) -> List[Dict[str, Any]]:
     }]
 
 
-def position_row(row, now: datetime, rules: Optional[List] = None) -> Dict[str, Any]:
+def _same_place(region: str, city: str) -> bool:
+    """Регион и город — одно и то же место?
+
+    «Москва» в городе и «Москва и область» в регионе — не два уровня адреса,
+    а одна строка дважды: в подписи карточки это читалось бы как «Москва ·
+    Москва и область».
+    """
+    if not region or not city:
+        return False
+    left, right = region.lower(), city.lower()
+    return left == right or left.startswith(right + " и ")
+
+
+def position_row(
+        row,
+        now: datetime,
+        rules: Optional[List] = None,
+        city_regions: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
     """Строка реестра → позиция в модели макета."""
     city = geo.normalize_city(row["city"])
-    region = geo.normalize_region(row["region"])
-    district = region if region and region.lower() != city.lower() else ""
+    # Регион — единым написанием (см. registry/geo.py): по нему на экране
+    # собирается выбор «показать всё, что есть в области», а «Мордовия» и
+    # «Республика мордовия» развалили бы одну область на две строки списка.
+    region = geo.resolve_region(row["region"], city, city_regions)
+    district = region if region and not _same_place(region, city) else ""
 
     schedule = _s(row["schedule"])
     hours = _f(row["shift_hours"])
     cits = parse_citizenship(row["citizenship_requirements"])
+    # Читаем три поля: в «Гражданстве» это лежит у трёх позиций из 874, всё
+    # остальное — в «Требованиях» и «Рисках». sb_policy не смотрим: там этого
+    # не бывает ни разу.
+    eth = parse_ethnic_limits(
+        row["requirements"], row["citizenship_requirements"], row["risks"],
+    )
     house = housing_block(row)
     meals = meals_block(row)
     travel = travel_block(row)
@@ -499,12 +527,6 @@ def position_row(row, now: datetime, rules: Optional[List] = None) -> Dict[str, 
 
         "cp": _s(row["counterparty"]),
         # Публичного алиаса контрагента в системе нет: кандидату показываем
-    # Читаем три поля: в «Гражданстве» это лежит у трёх позиций из 874, всё
-    # остальное — в «Требованиях» и «Рисках». sb_policy не смотрим: там этого
-    # не бывает ни разу.
-    eth = parse_ethnic_limits(
-        row["requirements"], row["citizenship_requirements"], row["risks"],
-    )
         # категорию объекта, а не название контрагента.
         "cpAlias": "",
         "cpType": _s(row["vacancy_category"]),
@@ -539,6 +561,7 @@ def position_row(row, now: datetime, rules: Optional[List] = None) -> Dict[str, 
         "ageTo": _i(row["age_to"]),
         "cits": cits,
         "citsRaw": _s(row["citizenship_requirements"]),
+        "eth": eth,
         "req": _s(row["requirements"]),
         "duties": _s(row["duties"]),
         "advantages": _s(row["advantages"]),
@@ -561,7 +584,6 @@ def position_row(row, now: datetime, rules: Optional[List] = None) -> Dict[str, 
         "dedSt": ded["dedSt"],
         # Видео и маршрутов реестр не хранит; фотографии объекта приходят из
         # папки проекта на Яндекс.Диске.
-        "eth": eth,
         "media": media_block(row),
     }
 
@@ -816,6 +838,32 @@ def cities_block(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return sorted(seen.values(), key=lambda c: (-c["count"], c["name"]))
 
 
+def regions_block(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Области для панели выбора: сколько позиций и сколько городов в каждой.
+
+    Позиции без региона идут отдельной строкой с пустым name и стоят в конце
+    списка: «регион не указан» — это состояние данных, а не область, но и
+    прятать такие позиции из выбора нельзя, иначе они видны только тогда,
+    когда не выбрано вообще ничего.
+    """
+    seen: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        name = row["region"]
+        item = seen.get(name)
+        if not item:
+            item = seen[name] = {"name": name, "count": 0, "cities": 0, "_cities": set()}
+        item["count"] += 1
+        if row["city"]:
+            item["_cities"].add(row["city"])
+
+    out = []
+    for item in seen.values():
+        item["cities"] = len(item.pop("_cities"))
+        out.append(item)
+    out.sort(key=lambda r: (not r["name"], -r["count"], r["name"]))
+    return out
+
+
 def raw_fields(row) -> Dict[str, str]:
     """«Как пришло» по полям — из *_raw колонок реестра."""
     pairs = (
@@ -935,8 +983,13 @@ def build_payload(conn, active_only: bool = True) -> Dict[str, Any]:
     raws: Dict[str, Dict[str, str]] = {}
     titles: Dict[str, Dict[str, str]] = {}
     rules = rates.load_rules(conn)
+    # Подтверждённый справочник «город → регион»: им приём заполняет пустой
+    # регион (registry/normalize.py), им же он заполняется и здесь — для строк,
+    # принятых до того, как справочник пополнили. Берём только подтверждённые
+    # соответствия: неподтверждённые ждут человека в /registry/dictionaries.
+    city_regions = dicts.load(conn, dicts.KIND_CITY_REGION)
     for db_row in db_rows:
-        row = position_row(db_row, now, rules)
+        row = position_row(db_row, now, rules, city_regions)
         rows.append(row)
         text = _s(db_row["raw_text"])
         if text:
@@ -961,6 +1014,7 @@ def build_payload(conn, active_only: bool = True) -> Dict[str, Any]:
         "cpTitles": titles,
         "rates": rates_block(conn, rows),
         "cities": cities_block(rows),
+        "regions": regions_block(rows),
         "sources": sources_block(conn, now),
         "cps": counterparties_block(conn, rows),
         "dupes": dupes["dupes"],

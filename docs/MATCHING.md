@@ -31,6 +31,7 @@ ON r.request_id = p.last_request_id LEFT JOIN position_kb k ON k.position_id = p
 | `cpTitles` | `{position_id: {t: vacancy_name_raw или prof, ref: last_request_id}}` | `navigator_api.py:746-749` |
 | `rates` | `{sources, rules, history, expired, withRate}` | `rates_block` — `navigator_api.py:620-664` |
 | `cities` | `[{name, region, lat, lon, count}]`, координаты из `registry.geo.coords` | `cities_block` — `navigator_api.py:667-686` |
+| `regions` | `[{name, count, cities}]` — области для выбора «показать всё по области»; `cities` здесь **число** городов, а не список. Позиции без региона — последней строкой с пустым `name` | `regions_block` — `navigator_api.py` |
 | `sources` | карточки источников `{id: SRC-NN, key, cp, kind, address, times, last, status: ok\|error, error, pos, requests}` | `sources_block` — `navigator_api.py:515-552` |
 | `cps` | карточки контрагентов; контрагент здесь = **источник**, а не поле `counterparty` | `counterparties_block` — `navigator_api.py:555-617` |
 | `dupes` | `{position_id: другой_position_id}` | `find_dupes` — `navigator_api.py:466-510` |
@@ -57,8 +58,11 @@ NULL превращается в `None`/`"na"`, а не в 0 (`_b` — `:109-113
   `seen` («сегодня 14:20» / «вчера» / «3 августа», `fmt_seen` — `:129-146`), `seenAt` (ISO).
 - **Контрагент и ставка**: `cp`, `cpAlias` — **всегда `""`** (`:383`), `cpType` (vacancy_category),
   `obj`, `client` = `rates.client_key(counterparty, object_name)`, `rec` = `rates.resolve` (`:363-366`).
-- **География**: `city`/`region` через `geo.normalize_city`/`normalize_region`, `district` = регион,
-  если он не совпадает с городом (`:350-352`), `addr`.
+- **География**: `city` через `geo.normalize_city`; `region` — через `geo.resolve_region`: единое
+  написание области (`geo.region_title`: «Мордовия», «Республика мордовия» и «САРАНСКАЯ область» —
+  одна строка; Москва и Питер идут вместе со своими областями), а если источник регион не написал —
+  подстановка из подтверждённого справочника `city_region`. `district` = регион, если он не то же
+  самое место, что город (`_same_place`: «Москва» и «Москва и область» — одно и то же), `addr`.
 - **Деньги и график**: `rate`, `hourly`, `unit` = `"смена"`, `net` = `""`, `sched`, `schedKind`
   (work_pattern), `hours`, `shiftType` (day→дневная, night→ночная, mixed→дневная и ночная, `:229-230`),
   `minShifts`, `workFormat`.
@@ -218,6 +222,14 @@ N смен — ниже нижней ступени"`, `min_shifts` не зад�
 справа. Различается стартовое состояние: макет открывается с `sel: ['Москва']`
 (`navigator/navigator.html:1057`), рабочий — с пустым выбором (`templates/navigator.html:117`).
 
+Выбор по областям есть только в рабочем экране, в макете его нет. Панель «Города» стала «Географией»
+с двумя вкладками (`S.geoTab`, по умолчанию «Области»): область — это `S.regions`, город — прежний
+`S.sel`, а список позиций фильтрует `passGeo`. Область и город **складываются, а не пересекаются**:
+выбраны Тульская область и Москва — видно и то, и другое. Причина в данных: у части позиций города
+нет вовсе (17 из 114 на снимке от 11 августа 2026), и списком городов их не найти ни одним кликом —
+только областью. Город, уже попавший в выдачу выбранной областью, помечен в списке пилюлей
+«в области» — там же, где радиус показывает «50 км».
+
 ### 2.4 Радиус — что есть и чего нет
 
 И в макете, и в рабочем экране радиус считается **в браузере**: гаверсинус `_dist`
@@ -225,7 +237,8 @@ N смен — ниже нижней ступени"`, `min_shifts` не зад�
 выбранный город, соседи — города списка в пределах `radius` от любого якоря.
 В Python расчёта расстояния нет вообще. `registry/geo.py` — только справочник: `CITY_ALIASES`
 (`geo.py:18-34`, 14 соответствий написаний), `CITY_COORDS` (`geo.py:37-91`, **62 города**, точность
-«до города»), `normalize_city` (`:109-129`), `normalize_region` (`:132-141`), `coords(city)` (`:144-148`).
+«до города»), `normalize_city`, `region_title`/`resolve_region` (сведение написаний области),
+`coords(city)`.
 Функций haversine, радиуса и «соседних городов» там **нет** — докстринг `geo.py:5-10` их обещает,
 реализации не существует, поиск по репозиторию даёт совпадения только в комментариях. Координаты
 уезжают на фронт как `lat`/`lon` в `cities_block` (`navigator_api.py:667-686`); нет координат —

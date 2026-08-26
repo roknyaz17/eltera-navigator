@@ -104,7 +104,7 @@ const TG_LIMIT = 4096;
 let DATA = {
   rows: [], raw: {}, rawFields: {}, cpTitles: {},
   rates: { sources: [], rules: [], history: [], expired: 0, withRate: 0 },
-  cities: [],
+  cities: [], regions: [],
   sources: [], cps: [], dupes: {}, conflicts: {}, required: {}, schedules: [],
   template: '', outreachEnabled: false, lastRun: '', nextRun: '', updatedAt: '',
   total: 0, activeRequest: null
@@ -113,6 +113,11 @@ let DATA = {
 const S = {
   screen: 'search',
   sel: [],
+  // Выбранные области. Отдельно от городов, потому что это не то же самое:
+  // у части позиций города нет вовсе (сегодня у 17 из 114, и область у них
+  // известна) — списком городов такую позицию не найти ни одним кликом.
+  regions: [],
+  geoTab: 'reg',
   radius: 0,
   citySearch: '',
   q: '',
@@ -285,6 +290,27 @@ function dist(a, b) {
 
 function cityOf(name) { return DATA.cities.find((c) => c.name === name); }
 function hasPoint(c) { return !!(c && typeof c.lat === 'number' && typeof c.lon === 'number'); }
+
+/* Область у позиции может быть не заполнена — и это тоже строка выбора, а не
+   повод спрятать позицию: пустое имя приезжает с сервера отдельным пунктом
+   (regions_block в navigator_api.py). */
+const NO_REGION = 'Регион не указан';
+function regionLabel(name) { return name || NO_REGION; }
+
+function plural(n, one, few, many) {
+  const tens = n % 100, ones = n % 10;
+  if (tens >= 11 && tens <= 14) return many;
+  if (ones === 1) return one;
+  if (ones >= 2 && ones <= 4) return few;
+  return many;
+}
+
+function geoSummary() {
+  const parts = [];
+  if (S.regions.length) parts.push(S.regions.length + ' ' + plural(S.regions.length, 'область', 'области', 'областей'));
+  if (S.sel.length) parts.push(S.sel.length + ' ' + plural(S.sel.length, 'город', 'города', 'городов'));
+  return parts.length ? 'выбрано: ' + parts.join(' · ') : 'вся страна';
+}
 
 function nearNames() {
   if (!S.radius || !S.sel.length) return [];
@@ -609,32 +635,6 @@ function candidateText(r, picked) {
   return scrub(L.join('\n'), r);
 }
 
-/* =============================== фильтрация =============================== */
-
-function passAge(r, age) {
-  if (!age) return true;
-  const a = Number(age);
-  if (r.ageFrom && a < r.ageFrom) return false;
-  if (r.ageTo && a > r.ageTo) return false;
-  return true;
-}
-
-function pass(r) {
-  const allow = S.sel.length ? S.sel.concat(nearNames()) : null;
-  if (allow && allow.indexOf(r.city) < 0) return false;
-  if (S.rateMin && (!r.rate || r.rate < Number(S.rateMin))) return false;
-
-  const m = rec(r);
-  if (S.fRec === 'set' && !m) return false;
-  if (S.fRec === 'none' && m) return false;
-  if (S.fRec === 'expired' && !(m && m.expired)) return false;
-
-  if (S.fHouse === 'yes' && r.house.st !== 'yes') return false;
-  if (S.fHouse === 'free' && !(r.house.st === 'yes' && r.house.cost === 'free')) return false;
-  if (S.fHouse === 'no' && r.house.st !== 'no') return false;
-
-  if (S.fMeals === 'yes' && ['free', 'deduct', 'paid', 'yes'].indexOf(r.meals.st) < 0) return false;
-  if (S.fMeals === 'free' && r.meals.st !== 'free') return false;
 /* ---- ограничения по национальности: только внутрь, кандидату не уходит ---- */
 /* Заказчики пишут «строго не Кавказ» и «СТРОГО НЕ ЦЫГАН» открытым текстом, и
    рекрутёру это знать надо — иначе человека везут на объект, где ему откажут
@@ -664,6 +664,42 @@ function ethDetail(r) {
   }).filter(Boolean).join('; ');
 }
 
+/* =============================== фильтрация =============================== */
+
+function passAge(r, age) {
+  if (!age) return true;
+  const a = Number(age);
+  if (r.ageFrom && a < r.ageFrom) return false;
+  if (r.ageTo && a > r.ageTo) return false;
+  return true;
+}
+
+/* География: области и города складываются, а не пересекаются.
+   Выбраны Тульская область и Москва — покажем и то, и другое. Пересечение
+   («город внутри выбранной области») читалось бы как обнуление выдачи: клик по
+   городу из другой области оставлял бы пустой список, и объяснить это в
+   интерфейсе нечем. Позиции без города ловятся только областью. */
+function passGeo(r) {
+  if (!S.regions.length && !S.sel.length) return true;
+  if (S.regions.length && S.regions.indexOf(r.region || '') >= 0) return true;
+  return S.sel.length > 0 && S.sel.concat(nearNames()).indexOf(r.city) >= 0;
+}
+
+function pass(r) {
+  if (!passGeo(r)) return false;
+  if (S.rateMin && (!r.rate || r.rate < Number(S.rateMin))) return false;
+
+  const m = rec(r);
+  if (S.fRec === 'set' && !m) return false;
+  if (S.fRec === 'none' && m) return false;
+  if (S.fRec === 'expired' && !(m && m.expired)) return false;
+
+  if (S.fHouse === 'yes' && r.house.st !== 'yes') return false;
+  if (S.fHouse === 'free' && !(r.house.st === 'yes' && r.house.cost === 'free')) return false;
+  if (S.fHouse === 'no' && r.house.st !== 'no') return false;
+
+  if (S.fMeals === 'yes' && ['free', 'deduct', 'paid', 'yes'].indexOf(r.meals.st) < 0) return false;
+  if (S.fMeals === 'free' && r.meals.st !== 'free') return false;
   if (S.fMeals === 'no' && r.meals.st !== 'no') return false;
 
   if (S.fCit) {
@@ -673,6 +709,21 @@ function ethDetail(r) {
     } else if (S.fCit === 'РФ + РБ') {
       if (r.cits.indexOf('РБ') < 0) return false;
     } else if (r.cits.indexOf(S.fCit) < 0) return false;
+  }
+
+  if (S.fEth) {
+    const kav = ethState(r, 'kav'), gyp = ethState(r, 'gyp');
+    // Молчание заявки — это «не написано», а не «можно»: про Кавказ молчат
+    // две трети позиций. Из подбора мы их не выкидываем (иначе фильтр съест
+    // почти всю выдачу), но и за разрешение не выдаём — в карточке у них
+    // пусто, и это повод спросить заказчика, а не везти человека наугад.
+    if (S.fEth === 'kav' && kav === 'ban') return false;
+    if (S.fEth === 'gyp' && gyp === 'ban') return false;
+    // «Прямо разрешено» — это только те, где заказчик написал «можно».
+    // «Можно женщин» сюда входит: это разрешение, просто с оговоркой,
+    // а пол отсекается отдельным фильтром.
+    if (S.fEth === 'kavOk' && ['ok', 'women'].indexOf(kav) < 0) return false;
+    if (S.fEth === 'ban' && kav !== 'ban' && gyp !== 'ban') return false;
   }
 
   if (S.fGender === 'мужчины' && !(r.gender === 'мужчины' || r.gender === 'любые')) return false;
@@ -693,7 +744,7 @@ function ethDetail(r) {
   if (S.scope === 'gaps' && issues(r).length === 0) return false;
 
   if (S.q) {
-    const hay = [r.prof, r.req, r.cp, r.obj, r.city, r.district, r.cits.join(' '), r.sched, r.src]
+    const hay = [r.prof, r.req, r.cp, r.obj, r.city, r.district, r.region, r.cits.join(' '), r.sched, r.src]
       .join(' ').toLowerCase().replace(/ё/g, 'е');
     const toks = S.q.toLowerCase().replace(/ё/g, 'е').split(/\s+/).filter(Boolean);
     if (!toks.every((t) => hay.indexOf(t) >= 0)) return false;
@@ -711,21 +762,6 @@ function sorted(rows) {
     const da = hasPoint(ca) ? dist(anchor, ca) : 1e9;
     const db = hasPoint(cb) ? dist(anchor, cb) : 1e9;
     return da - db;
-  if (S.fEth) {
-    const kav = ethState(r, 'kav'), gyp = ethState(r, 'gyp');
-    // Молчание заявки — это «не написано», а не «можно»: про Кавказ молчат
-    // две трети позиций. Из подбора мы их не выкидываем (иначе фильтр съест
-    // почти всю выдачу), но и за разрешение не выдаём — в карточке у них
-    // пусто, и это повод спросить заказчика, а не везти человека наугад.
-    if (S.fEth === 'kav' && kav === 'ban') return false;
-    if (S.fEth === 'gyp' && gyp === 'ban') return false;
-    // «Прямо разрешено» — это только те, где заказчик написал «можно».
-    // «Можно женщин» сюда входит: это разрешение, просто с оговоркой,
-    // а пол отсекается отдельным фильтром.
-    if (S.fEth === 'kavOk' && ['ok', 'women'].indexOf(kav) < 0) return false;
-    if (S.fEth === 'ban' && kav !== 'ban' && gyp !== 'ban') return false;
-  }
-
   });
   else if (S.sort === 'rec') out.sort((a, b) => recAmount(rec(b)) - recAmount(rec(a)));
   else out.sort((a, b) => (b.rate || 0) - (a.rate || 0));
@@ -1055,7 +1091,10 @@ function viewAside() {
   const near = nearNames();
   const term = S.citySearch.trim().toLowerCase().replace(/ё/g, 'е');
   const anchor = S.sel.length ? cityOf(S.sel[0]) : null;
-  const cities = DATA.cities.filter((c) => !term || (c.name + ' ' + (c.region || '')).toLowerCase().replace(/ё/g, 'е').indexOf(term) >= 0);
+  const found = (text) => !term || String(text || '').toLowerCase().replace(/ё/g, 'е').indexOf(term) >= 0;
+  const cities = DATA.cities.filter((c) => found(c.name + ' ' + (c.region || '')));
+  const regions = (DATA.regions || []).filter((x) => found(regionLabel(x.name)));
+  const byRegion = S.geoTab === 'reg';
 
   /* Колонка ровно по высоте окна и со своей прокруткой. Раньше здесь стояли
      min-height:520px и overflow:hidden: на нераскрытом окне колонка получалась
@@ -1063,44 +1102,78 @@ function viewAside() {
      причём без полосы прокрутки, так что добраться до него было нечем. */
   let html = '<aside class="appScroll navAside" style="flex:1 1 320px; max-width:100%; display:flex; flex-direction:column; gap:12px; position:sticky; top:14px; height:calc(100vh - 124px); min-height:0; overflow-y:auto; overflow-x:hidden; padding-right:2px;">';
 
-  /* Города забирают всю свободную высоту, но не всю целиком: у панели фильтров
-     под ними своя нижняя граница, иначе на невысоком экране она ужимается в
-     полоску с одним видимым полем. Список городов внутри сам скроллится. */
+  /* География забирает всю свободную высоту, но не всю целиком: у панели
+     фильтров под ней своя нижняя граница, иначе на невысоком экране она
+     ужимается в полоску с одним видимым полем. Список внутри сам скроллится. */
   html += '<section class="liquid-glass" style="border-radius:18px; padding:18px; flex:1 1 auto; min-height:170px; display:flex; flex-direction:column; overflow:hidden;">'
     + '<div style="display:flex; align-items:baseline; justify-content:space-between; gap:10px;">'
-    + '<h2 style="margin:0; font-size:15px; font-weight:600; letter-spacing:-.02em; color:#fff;">Города</h2>'
-    + '<span style="font-size:11.5px; color:rgba(255,255,255,.45);">' + (S.sel.length ? 'выбрано ' + S.sel.length : 'все города') + '</span>'
+    + '<h2 style="margin:0; font-size:15px; font-weight:600; letter-spacing:-.02em; color:#fff;">География</h2>'
+    + '<span style="font-size:11.5px; color:rgba(255,255,255,.45);">' + esc(geoSummary()) + '</span>'
     + '</div>'
-    + '<div style="position:relative; margin-top:12px;">'
+    /* Две вкладки, а не два списка подряд: панель и так на весь экран, а
+       второй список отобрал бы у городов половину высоты. Первой стоит
+       область — с неё начинается подбор («что есть в Тульской»), город
+       уточняет уже внутри. */
+    + '<div style="display:flex; gap:6px; margin-top:12px;">'
+    + [{ key: 'reg', label: 'Области', count: (DATA.regions || []).length },
+       { key: 'city', label: 'Города', count: DATA.cities.length }]
+      .map((t) => '<button type="button" data-act="geoTab" data-arg="' + t.key + '"' + (S.geoTab === t.key ? '' : ' class="hLight"')
+        + ' style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; height:30px; border:' + (S.geoTab === t.key ? 'none' : '1px solid rgba(255,255,255,.12)')
+        + '; border-radius:9999px; background:' + (S.geoTab === t.key ? '#fff' : 'rgba(255,255,255,.04)')
+        + '; color:' + (S.geoTab === t.key ? '#0A0F1E' : 'rgba(255,255,255,.7)') + '; font-size:12.5px;' + (S.geoTab === t.key ? ' font-weight:600;' : '')
+        + ' cursor:pointer;' + (S.geoTab === t.key ? '' : ' transition:.2s;') + '">' + esc(t.label)
+        + '<span style="font-size:11px; opacity:.55; font-variant-numeric:tabular-nums;">' + t.count + '</span></button>').join('')
+    + '</div>'
+    + '<div style="position:relative; margin-top:10px;">'
     + '<span style="position:absolute; left:13px; top:50%; transform:translateY(-50%); color:rgba(255,255,255,.45); display:flex;">' + SEARCH_ICON + '</span>'
-    + '<input type="text" class="fLine" data-fid="citySearch" data-on="citySearch" placeholder="Найти город" value="' + attr(S.citySearch) + '" style="width:100%; height:34px; padding:0 14px 0 34px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12.5px; outline:none;">'
+    + '<input type="text" class="fLine" data-fid="citySearch" data-on="citySearch" placeholder="' + (byRegion ? 'Найти область' : 'Найти город') + '" value="' + attr(S.citySearch) + '" style="width:100%; height:34px; padding:0 14px 0 34px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12.5px; outline:none;">'
     + '</div>';
 
-  if (S.sel.length) {
+  /* Выбранное показываем целиком, обеими вкладками сразу: иначе выбранная
+     область пропадала бы из виду, стоило переключиться на города. */
+  if (S.regions.length || S.sel.length) {
+    const chip = (act, value, label) => '<button type="button" data-act="' + act + '" data-arg="' + attr(value) + '" style="display:flex; align-items:center; gap:6px; height:28px; padding:0 8px 0 11px; border:1px solid rgba(164,244,253,.35); border-radius:9999px; background:rgba(164,244,253,.12); color:#A4F4FD; font-size:12px; font-weight:400; cursor:pointer;">' + esc(label)
+      + '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"></path></svg></button>';
     html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;">'
-      + S.sel.map((n) => '<button type="button" data-act="cityRemove" data-arg="' + attr(n) + '" style="display:flex; align-items:center; gap:6px; height:28px; padding:0 8px 0 11px; border:1px solid rgba(164,244,253,.35); border-radius:9999px; background:rgba(164,244,253,.12); color:#A4F4FD; font-size:12px; font-weight:400; cursor:pointer;">' + esc(n)
-        + '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"></path></svg></button>').join('')
-      + '<button type="button" data-act="cityClear" style="height:28px; padding:0 10px; border:1px solid rgba(255,255,255,.12); border-radius:9999px; background:transparent; color:rgba(255,255,255,.45); font-size:12px; cursor:pointer;">сбросить</button>'
+      + S.regions.map((n) => chip('regionRemove', n, regionLabel(n))).join('')
+      + S.sel.map((n) => chip('cityRemove', n, n)).join('')
+      + '<button type="button" data-act="geoClear" style="height:28px; padding:0 10px; border:1px solid rgba(255,255,255,.12); border-radius:9999px; background:transparent; color:rgba(255,255,255,.45); font-size:12px; cursor:pointer;">сбросить</button>'
       + '</div>';
   }
 
-  html += '<div class="appScroll cityList" data-scroll="cities" style="flex:1 1 auto; min-height:72px; overflow-y:auto; margin-top:10px; display:flex; flex-direction:column; gap:2px;">'
-    + cities.map((c) => {
+  const box = (on) => on
+    ? '<span style="flex:none; width:17px; height:17px; border-radius:5px; border:1px solid rgba(164,244,253,.55); background:rgba(164,244,253,.12); display:grid; place-items:center; color:#A4F4FD;">' + CHECK_ICON + '</span>'
+    : '<span style="flex:none; width:17px; height:17px; border-radius:5px; border:1px solid rgba(148,180,230,.3);"></span>';
+  const line = (act, value, title, note, badge, count) =>
+    '<button type="button" class="hSoft" data-act="' + act + '" data-arg="' + attr(value) + '" style="display:flex; align-items:center; gap:10px; width:100%; padding:8px 9px; border:none; border-radius:10px; background:transparent; text-align:left; cursor:pointer; transition:.2s;">'
+    + box(act === 'regionToggle' ? S.regions.indexOf(value) >= 0 : S.sel.indexOf(value) >= 0)
+    + '<span style="flex:1; min-width:0;">'
+    + '<span style="display:block; font-size:13.5px; color:#E6F2FF; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + esc(title) + '</span>'
+    + '<span style="display:block; font-size:11px; color:rgba(255,255,255,.4); margin-top:1px;">' + esc(note) + '</span>'
+    + '</span>'
+    + (badge ? '<span style="flex:none; font-size:10.5px; color:rgba(255,255,255,.6); padding:2px 6px; border-radius:9999px; background:rgba(255,255,255,.06);">' + esc(badge) + '</span>' : '')
+    + '<span style="flex:none; font-size:12px; color:rgba(255,255,255,.4); font-variant-numeric:tabular-nums;">' + count + '</span>'
+    + '</button>';
+
+  const list = byRegion
+    ? regions.map((x) => line('regionToggle', x.name, regionLabel(x.name),
+        x.cities ? x.cities + ' ' + plural(x.cities, 'город', 'города', 'городов') : 'город не указан',
+        '', x.count))
+    : cities.map((c) => {
       const on = S.sel.indexOf(c.name) >= 0;
       const isNear = !on && near.indexOf(c.name) >= 0;
-      const nearText = isNear && hasPoint(anchor) && hasPoint(c) ? dist(anchor, c) + ' км' : '';
-      return '<button type="button" class="hSoft" data-act="cityToggle" data-arg="' + attr(c.name) + '" style="display:flex; align-items:center; gap:10px; width:100%; padding:8px 9px; border:none; border-radius:10px; background:transparent; text-align:left; cursor:pointer; transition:.2s;">'
-        + (on
-          ? '<span style="flex:none; width:17px; height:17px; border-radius:5px; border:1px solid rgba(164,244,253,.55); background:rgba(164,244,253,.12); display:grid; place-items:center; color:#A4F4FD;">' + CHECK_ICON + '</span>'
-          : '<span style="flex:none; width:17px; height:17px; border-radius:5px; border:1px solid rgba(148,180,230,.3);"></span>')
-        + '<span style="flex:1; min-width:0;">'
-        + '<span style="display:block; font-size:13.5px; color:#E6F2FF; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + esc(c.name) + '</span>'
-        + '<span style="display:block; font-size:11px; color:rgba(255,255,255,.4); margin-top:1px;">' + esc(c.region || '') + '</span>'
-        + '</span>'
-        + (nearText ? '<span style="flex:none; font-size:10.5px; color:rgba(255,255,255,.6); padding:2px 6px; border-radius:9999px; background:rgba(255,255,255,.06);">' + esc(nearText) + '</span>' : '')
-        + '<span style="flex:none; font-size:12px; color:rgba(255,255,255,.4); font-variant-numeric:tabular-nums;">' + c.count + '</span>'
-        + '</button>';
-    }).join('')
+      // Город уже попал в выдачу выбранной областью — об этом честнее
+      // сказать, чем оставить рекрутёра гадать, почему галочка ничего не
+      // меняет. Та же пилюля, что и у радиуса: «и так в списке».
+      const inRegion = !on && S.regions.indexOf(c.region || '') >= 0;
+      const badge = isNear && hasPoint(anchor) && hasPoint(c) ? dist(anchor, c) + ' км' : (inRegion ? 'в области' : '');
+      return line('cityToggle', c.name, c.name, c.region || '', badge, c.count);
+    });
+
+  html += '<div class="appScroll cityList" data-scroll="cities" style="flex:1 1 auto; min-height:72px; overflow-y:auto; margin-top:10px; display:flex; flex-direction:column; gap:2px;">'
+    + (list.length
+      ? list.join('')
+      : '<div style="padding:16px 9px; font-size:12px; line-height:1.5; color:rgba(255,255,255,.45);">По запросу «' + esc(S.citySearch.trim()) + '» ' + (byRegion ? 'областей' : 'городов') + ' нет</div>')
     + '</div>';
 
   html += '<div style="flex:none; display:flex; align-items:center; gap:12px; margin-top:14px; padding-top:14px; border-top:1px solid rgba(255,255,255,.1);">'
@@ -1133,6 +1206,16 @@ function viewAside() {
   const opt = (v, t) => ({ v: v, t: t });
   const selFilters = [
     { label: 'Гражданство', value: S.fCit, key: 'fCit', opts: [opt('', 'любое'), opt('РФ', 'РФ'), opt('РФ + РБ', 'РФ + РБ'), opt('ЕАЭС', 'ЕАЭС')] },
+    // Отдельным полем, а не пунктом в «Гражданстве»: и Кавказ, и цыгане —
+    // граждане РФ, и подмешивать их к кодам гражданства значит врать в
+    // карточке («Гражданство: РФ, Кавказ») и ломать разбор citsRaw.
+    { label: 'Кавказ / цыгане', value: S.fEth, key: 'fEth', opts: [
+      opt('', 'не важно'),
+      opt('kav', 'кандидат с Кавказа'),
+      opt('kavOk', 'с Кавказа — где прямо разрешено'),
+      opt('gyp', 'кандидат-цыган'),
+      opt('ban', 'где написан запрет')
+    ] },
     { label: 'Проживание', value: S.fHouse, key: 'fHouse', opts: [opt('', 'любое'), opt('yes', 'есть'), opt('free', 'бесплатно'), opt('no', 'нет')] },
     { label: 'Питание', value: S.fMeals, key: 'fMeals', opts: [opt('', 'любое'), opt('yes', 'есть'), opt('free', 'бесплатно'), opt('no', 'нет')] },
     { label: 'Пол', value: S.fGender, key: 'fGender', opts: [opt('', 'любой'), opt('мужчины', 'мужчины'), opt('женщины', 'женщины'), opt('пары', 'пары')] },
@@ -1206,16 +1289,6 @@ function viewMain() {
     + '<span style="position:absolute; left:13px; top:50%; transform:translateY(-50%); color:rgba(255,255,255,.45); display:flex;">' + SEARCH_ICON + '</span>'
     + '<input type="text" class="fLine" data-fid="q" data-on="q" placeholder="Профессия, требование, контрагент" value="' + attr(S.q) + '" style="width:100%; height:38px; padding:0 14px 0 36px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:13px; outline:none;">'
     + '</div>'
-    // Отдельным полем, а не пунктом в «Гражданстве»: и Кавказ, и цыгане —
-    // граждане РФ, и подмешивать их к кодам гражданства значит врать в
-    // карточке («Гражданство: РФ, Кавказ») и ломать разбор citsRaw.
-    { label: 'Кавказ / цыгане', value: S.fEth, key: 'fEth', opts: [
-      opt('', 'не важно'),
-      opt('kav', 'кандидат с Кавказа'),
-      opt('kavOk', 'с Кавказа — где прямо разрешено'),
-      opt('gyp', 'кандидат-цыган'),
-      opt('ban', 'где написан запрет')
-    ] },
     + '<select data-on="sort" style="height:38px; padding:0 12px; border:1px solid rgba(255,255,255,.14); border-radius:9999px; background:rgba(255,255,255,.04); color:#E6F2FF; font-size:12.5px; outline:none; cursor:pointer;">'
     + sorts.map((s) => '<option value="' + s[0] + '"' + (S.sort === s[0] ? ' selected' : '') + '>' + esc(s[1]) + '</option>').join('')
     + '</select></div>';
@@ -1994,6 +2067,7 @@ function viewDetail(d) {
       field('Пол', d.gender, d.gender ? 'yes' : 'na'),
       field('Возраст', ageText(d), ageText(d) ? 'yes' : 'na'),
       field('Гражданство', d.citsRaw || d.cits.join(', '), (d.cits.length || d.citsRaw) ? 'yes' : 'na'),
+      field('Кавказ / цыгане', ethDetail(d), ethDetail(d) ? 'yes' : 'na'),
       field('Требования', d.req, d.req ? 'yes' : 'na'),
       field('Обязанности', d.duties, d.duties ? 'yes' : 'na'),
       field('Нужен ТСД', d.tsd === true ? 'Да' : (d.tsd === false ? 'Нет' : ''), d.tsd == null ? 'na' : 'yes'),
@@ -2067,7 +2141,6 @@ function viewDetail(d) {
     inner += '<div style="margin-top:16px;"><div style="display:flex; align-items:center; gap:9px;">'
       + '<span style="font-size:11px; color:rgba(255,255,255,.45);">Как пришло от заказчика</span>'
       + '<span style="flex:1; height:1px; background:rgba(255,255,255,.1);"></span></div>'
-      field('Кавказ / цыгане', ethDetail(d), ethDetail(d) ? 'yes' : 'na'),
       + '<pre style="margin:8px 0 0; padding:14px; border-radius:12px; background:rgba(10,15,30,.6); border:1px solid rgba(255,255,255,.1); font-family:\'Inter\',system-ui,sans-serif; font-size:12.5px; font-weight:400; line-height:1.65; color:rgba(255,255,255,.75); white-space:pre-wrap; word-break:break-word;">' + esc(rawText) + '</pre></div>';
   }
 
@@ -2257,6 +2330,14 @@ const ACTIONS = {
   cityToggle: (name) => setFilter({ sel: S.sel.indexOf(name) >= 0 ? S.sel.filter((n) => n !== name) : S.sel.concat([name]) }),
   cityRemove: (name) => setFilter({ sel: S.sel.filter((n) => n !== name) }),
   cityClear: () => setFilter({ sel: [] }),
+  // Регион без названия («не указан») — такой же пункт списка, как остальные:
+  // data-arg у него пустая строка, и сравнения по ней работают как обычно.
+  regionToggle: (name) => setFilter({ regions: S.regions.indexOf(name) >= 0 ? S.regions.filter((n) => n !== name) : S.regions.concat([name]) }),
+  regionRemove: (name) => setFilter({ regions: S.regions.filter((n) => n !== name) }),
+  geoClear: () => setFilter({ regions: [], sel: [] }),
+  // Вкладка списка — не фильтр: выбранное на другой вкладке остаётся в силе,
+  // и список позиций от переключения не меняется.
+  geoTab: (key) => setState({ geoTab: key, citySearch: '' }),
   toggleRadius: () => setFilter({ radius: S.radius ? 0 : 50 }),
   setRadius: (km) => setFilter({ radius: Number(km) }),
   toggleMore: () => setState({ moreOpen: !S.moreOpen }),
