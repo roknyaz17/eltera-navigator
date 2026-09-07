@@ -71,6 +71,7 @@ from loguru import logger
 import auth
 import metrics as M
 import users as users_mod
+import agent_search
 import navigator_api
 from pipeline import (
     ALL_SOURCES,
@@ -431,6 +432,30 @@ def require_admin(request: Request, user: str = Depends(verify_creds)) -> "users
         logger.warning(f"[auth] {person.email} без роли администратора пытался открыть {request.url.path}")
         raise HTTPException(403, "Доступ только для администратора")
     return person
+
+
+# Токен для машинных клиентов. Пока такой клиент один — голосовой агент, который
+# во время звонка спрашивает подходящие вакансии.
+#
+# Отдельный заголовок, а не сессия и не Basic, по трём причинам. Сессию пришлось
+# бы продлевать логином раз в неделю, а логин стоит 600k итераций PBKDF2 и
+# оставляет запись в журнале входов. Basic ограничен BASIC_PATHS и его собираются
+# убирать (SEC-14). И главное — обе схемы дают доступ ко всему сайту сразу, а
+# агенту нужна ровно одна ручка, отзываемая одной переменной окружения.
+AGENT_API_TOKEN = os.getenv("AGENT_API_TOKEN", "").strip()
+
+
+def verify_agent_token(request: Request) -> str:
+    """Пускает машинного клиента по заголовку X-Agent-Token."""
+    if not AGENT_API_TOKEN:
+        # Токен не задан — ручка выключена целиком. Так безопаснее, чем пускать
+        # всех: пустой токен иначе совпал бы с пустым заголовком.
+        raise HTTPException(503, "Доступ для агента не настроен")
+    provided = request.headers.get("X-Agent-Token", "")
+    if not secrets.compare_digest(provided, AGENT_API_TOKEN):
+        logger.warning(f"[agent] неверный токен с {_client_ip(request)}")
+        raise HTTPException(401, "Неверный токен")
+    return "agent"
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -1259,6 +1284,55 @@ async def api_vacancies(
             if _cache._timestamp else ""
         )
     return JSONResponse({"rows": rows, "count": len(rows), "updated_at": updated_at})
+
+
+@app.get("/api/agent/vacancies")
+async def api_agent_vacancies(
+        profession: str,
+        city: str = "",
+        region: str = "",
+        citizenship: str = "",
+        age: Optional[int] = None,
+        gender: str = "",
+        has_medical_book: Optional[bool] = None,
+        min_rate: Optional[int] = None,
+        limit: int = 3,
+        _: str = Depends(verify_agent_token),
+) -> JSONResponse:
+    """Подбор вакансий для голосового агента во время звонка.
+
+    Ручка узкая по умыслу: агент спрашивает человека и тут же зачитывает
+    варианты вслух, поэтому наружу уходит белый список полей, которые кандидату
+    можно назвать. Ни контрагента, ни объекта, ни адреса, ни ставки рекрутёра
+    здесь нет — подбор в agent_search собирает ответ с нуля, а не вычищает
+    карточку из /api/navigator.
+
+    Отвечать надо быстро: у инструмента ElevenLabs минимальный таймаут 5 секунд,
+    и всё это время в трубке тишина.
+    """
+    import asyncio
+
+    def _run() -> dict:
+        with registry_db.connect(readonly=True) as conn:
+            return agent_search.search(
+                conn,
+                profession=profession,
+                city=city,
+                region=region,
+                citizenship=citizenship,
+                age=age,
+                gender=gender,
+                has_medical_book=has_medical_book,
+                min_rate=min_rate,
+                limit=limit,
+            )
+
+    result = await asyncio.to_thread(_run)
+    logger.info(
+        f"[agent] подбор: {profession!r} город={city!r} → "
+        f"найдено {result['total_matched']}"
+    )
+    return JSONResponse(result)
 
 
 # ---------- /registry: единый реестр заявок ----------
