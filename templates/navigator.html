@@ -1205,6 +1205,7 @@ function viewAside() {
   ];
   const opt = (v, t) => ({ v: v, t: t });
   const selFilters = [
+    { label: 'Пол', value: S.fGender, key: 'fGender', opts: [opt('', 'любой'), opt('мужчины', 'мужчины'), opt('женщины', 'женщины'), opt('пары', 'пары')] },
     { label: 'Гражданство', value: S.fCit, key: 'fCit', opts: [opt('', 'любое'), opt('РФ', 'РФ'), opt('РФ + РБ', 'РФ + РБ'), opt('ЕАЭС', 'ЕАЭС')] },
     // Отдельным полем, а не пунктом в «Гражданстве»: и Кавказ, и цыгане —
     // граждане РФ, и подмешивать их к кодам гражданства значит врать в
@@ -1218,7 +1219,6 @@ function viewAside() {
     ] },
     { label: 'Проживание', value: S.fHouse, key: 'fHouse', opts: [opt('', 'любое'), opt('yes', 'есть'), opt('free', 'бесплатно'), opt('no', 'нет')] },
     { label: 'Питание', value: S.fMeals, key: 'fMeals', opts: [opt('', 'любое'), opt('yes', 'есть'), opt('free', 'бесплатно'), opt('no', 'нет')] },
-    { label: 'Пол', value: S.fGender, key: 'fGender', opts: [opt('', 'любой'), opt('мужчины', 'мужчины'), opt('женщины', 'женщины'), opt('пары', 'пары')] },
     { label: 'Медкнижка', value: S.fMed, key: 'fMed', opts: [opt('', 'любая'), opt('no', 'не нужна'), opt('arranged', 'можно без неё')] },
     { label: 'Проверка СБ', value: S.fSb, key: 'fSb', opts: [opt('', 'любая'), opt('none', 'нет'), opt('notfull', 'кроме полной')] }
   ];
