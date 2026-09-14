@@ -107,6 +107,7 @@ const filters = [
   ['fGender', 'мужчины'], ['fGender', 'женщины'], ['fGender', 'пары'],
   ['fMed', 'no'], ['fMed', 'arranged'], ['fSb', 'none'], ['fSb', 'notfull'],
   ['fRec', 'set'], ['fRec', 'none'], ['fRec', 'expired'],
+  ['fShifts', '15'], ['fShifts', '20'], ['fShifts', '30'],
   ['rateMin', '3500'], ['ageCand', '45'], ['q', 'комплектовщик'], ['scope', 'gaps']
 ];
 filters.forEach(([key, value]) => {

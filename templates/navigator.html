@@ -122,7 +122,7 @@ const S = {
   citySearch: '',
   q: '',
   rateMin: '', recPct: '', ageCand: '',
-  fRec: '', fHouse: '', fMeals: '', fCit: '', fEth: '', fGender: '', fMed: '', fSb: '', fSched: '',
+  fRec: '', fHouse: '', fMeals: '', fCit: '', fEth: '', fGender: '', fMed: '', fSb: '', fSched: '', fShifts: '',
   scope: 'all',
   adminTab: 'exc',
   // Доступы грузятся отдельной ручкой и только для администратора: список
@@ -674,6 +674,19 @@ function passAge(r, age) {
   return true;
 }
 
+/* Длина заезда. «15» и «20» — ровно столько смен, «от 30» — всё, что длиннее.
+   Порог «от 15» для первых двух пунктов сделал бы фильтр бесполезным: заезды в
+   реестре стоят кучно (15, 20, 30, 35, 45), и «от 15» оставляет 931 позицию из
+   1114 — то есть почти всю выдачу. Позиции, где минимум не указан, под фильтр
+   не попадают: подставлять им обычные 20 смен значит врать кандидату о длине
+   вахты, а таких позиций каждая седьмая. */
+function passShifts(r) {
+  if (!S.fShifts) return true;
+  const n = Number(r.minShifts);
+  if (!n) return false;
+  return S.fShifts === '30' ? n >= 30 : n === Number(S.fShifts);
+}
+
 /* География: области и города складываются, а не пересекаются.
    Выбраны Тульская область и Москва — покажем и то, и другое. Пересечение
    («город внутри выбранной области») читалось бы как обнуление выдачи: клик по
@@ -731,6 +744,7 @@ function pass(r) {
   if (S.fGender === 'пары' && !r.c) return false;
 
   if (!passAge(r, S.ageCand)) return false;
+  if (!passShifts(r)) return false;
 
   if (S.fMed === 'no' && r.med !== 'no') return false;
   if (S.fMed === 'arranged' && ['no', 'arranged'].indexOf(r.med) < 0) return false;
@@ -1206,6 +1220,9 @@ function viewAside() {
   const opt = (v, t) => ({ v: v, t: t });
   const selFilters = [
     { label: 'Пол', value: S.fGender, key: 'fGender', opts: [opt('', 'любой'), opt('мужчины', 'мужчины'), opt('женщины', 'женщины'), opt('пары', 'пары')] },
+    // Три пункта, а не свободный ввод: заезды в реестре стоят кучно вокруг 15,
+    // 20 и 30+ смен, и рекрутер спрашивает кандидата теми же словами.
+    { label: 'Смены', value: S.fShifts, key: 'fShifts', opts: [opt('', 'любые'), opt('15', '15 смен'), opt('20', '20 смен'), opt('30', 'от 30 смен')] },
     { label: 'Гражданство', value: S.fCit, key: 'fCit', opts: [opt('', 'любое'), opt('РФ', 'РФ'), opt('РФ + РБ', 'РФ + РБ'), opt('ЕАЭС', 'ЕАЭС')] },
     // Отдельным полем, а не пунктом в «Гражданстве»: и Кавказ, и цыгане —
     // граждане РФ, и подмешивать их к кодам гражданства значит врать в
@@ -2319,7 +2336,7 @@ function reloadData() {
 
 /* ================================ действия ================================ */
 
-const FILTER_KEYS = ['q', 'rateMin', 'ageCand', 'fRec', 'fHouse', 'fMeals', 'fCit', 'fEth', 'fGender', 'fMed', 'fSb', 'fSched', 'sort'];
+const FILTER_KEYS = ['q', 'rateMin', 'ageCand', 'fRec', 'fHouse', 'fMeals', 'fCit', 'fEth', 'fGender', 'fMed', 'fSb', 'fSched', 'fShifts', 'sort'];
 
 function setFilter(patch) { _resetList = true; setState(patch); }
 
@@ -2341,7 +2358,7 @@ const ACTIONS = {
   toggleRadius: () => setFilter({ radius: S.radius ? 0 : 50 }),
   setRadius: (km) => setFilter({ radius: Number(km) }),
   toggleMore: () => setState({ moreOpen: !S.moreOpen }),
-  resetFilters: () => setFilter({ rateMin: '', recPct: '', ageCand: '', fRec: '', fHouse: '', fMeals: '', fCit: '', fEth: '', fGender: '', fMed: '', fSb: '', fSched: '' }),
+  resetFilters: () => setFilter({ rateMin: '', recPct: '', ageCand: '', fRec: '', fHouse: '', fMeals: '', fCit: '', fEth: '', fGender: '', fMed: '', fSb: '', fSched: '', fShifts: '' }),
   setScope: (key) => setFilter({ scope: key }),
 
   openText: (id) => setState({ modal: id, copied: false }),
