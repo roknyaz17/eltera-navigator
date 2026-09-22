@@ -119,6 +119,48 @@ def test_expired_rule_is_shown_but_marked():
     assert hit["expired"] is False
 
 
+def test_expired_object_priority_yields_to_live_counterparty_ladder():
+    """Временный приоритет на объекте кончился — видна обычная сетка контрагента.
+
+    Раньше истёкший приоритет продолжал перебивать действующую лестницу: объект
+    показывал старую повышенную сумму с пометкой «просрочено» вместо ступени.
+    Имена объектов и суммы здесь условные.
+    """
+    rules = LADDER + [rule(client="Склад Альфа", amount=99000,
+                           valid_from="2030-03-04", valid_to="2030-03-10")]
+    during = rates.resolve(rules, "vahtapro", "Склад Альфа", "Грузчик", 15, today=date(2030, 3, 7))
+    assert during["amount"] == 99000 and during["expired"] is False
+
+    after = rates.resolve(rules, "vahtapro", "Склад Альфа", "Грузчик", 15, today=date(2030, 3, 11))
+    assert after["amount"] == 15000 and after["expired"] is False
+    assert after["byShifts"] is True
+
+
+def test_last_day_of_priority_still_counts():
+    """valid_to включительно: в последний день приоритет ещё действует."""
+    rules = LADDER + [rule(client="Склад Альфа", amount=99000, valid_to="2030-03-10")]
+    hit = rates.resolve(rules, "vahtapro", "Склад Альфа", "Грузчик", 15, today=date(2030, 3, 10))
+    assert hit["amount"] == 99000
+
+
+def test_expired_vacancy_rule_yields_to_live_object_rule():
+    rules = [rule(client="Завод Бета", amount=11000),
+             rule(client="Завод Бета", vacancy="Грузчик", amount=77000, valid_to="2030-01-31")]
+    hit = rates.resolve(rules, "vahtapro", "Завод Бета", "Грузчик", 30, today=date(2030, 3, 1))
+    assert hit["amount"] == 11000 and hit["expired"] is False
+
+
+def test_all_expired_still_shows_most_specific_marked():
+    """Действующих правил нет — показываем самое конкретное из просроченных.
+
+    Иначе объект с неосвежённой сеткой выглядел бы как объект без ставки.
+    """
+    rules = [rule(min_shifts=15, amount=11000, valid_to="2030-01-31"),
+             rule(client="Завод Бета", amount=22000, valid_to="2030-01-31")]
+    hit = rates.resolve(rules, "vahtapro", "Завод Бета", "Грузчик", 20, today=date(2030, 3, 1))
+    assert hit["amount"] == 22000 and hit["expired"] is True
+
+
 def test_note_and_payout_travel_with_the_rate():
     rules = [rule(amount=20000, note="повторная вахта — 50%", payout="адаптация 5 смен")]
     hit = rates.resolve(rules, "vahtapro", "BMJ", "Грузчик", 20)
