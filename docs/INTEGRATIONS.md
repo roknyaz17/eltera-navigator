@@ -18,7 +18,7 @@
 
 ## 1. Google Sheets
 
-**Назначение.** Три таблицы — источники заявок (`kpk`, `ametist`, `marketstaff`), четвёртая — витрина реестра для тех, кто привык смотреть данные в
+**Назначение.** Четыре таблицы — источники заявок (`kpk`, `ametist`, `marketstaff`, `tabiya`), пятая — витрина реестра для тех, кто привык смотреть данные в
 Sheets (`registry/export_sheets.py:1-11`).
 
 **Авторизация.** Сервисный аккаунт: `ServiceAccountCredentials.from_json_keyfile_name(credentials_path, scope)` + `gspread.authorize`
@@ -27,7 +27,7 @@ Sheets (`registry/export_sheets.py:1-11`).
 `app.py:113` (создание сервиса на импорте модуля). Ни env-переменной, ни CLI-аргумента для пути нет. В контейнер файл монтируется отдельно
 (`docker-compose.yml:29`, `./credentials.json:/app/credentials.json:ro`).
 
-**Идентификаторы таблиц — константы в коде,** не в окружении:
+**Идентификаторы таблиц — константы в коде,** не в окружении (кроме Табии: её книга берётся из env `TABIYA_SPREADSHEET_ID`, потому что репозиторий публичный; пустая переменная означает, что источник пропускается с предупреждением в логе):
 
 | Константа | Значение | Строка |
 |---|---|---|
@@ -35,11 +35,12 @@ Sheets (`registry/export_sheets.py:1-11`).
 | `KPK_MATRIX_ID`, лист `Таблица` | `18dIE1…8UOc` | `pipeline.py:50`, `pipeline.py:209` |
 | `MARKETSTAFF_SPREADSHEET_ID`, лист `Объекты МО` | `1boGa7…CJvI` | `pipeline.py:56-58` |
 | `AMETIST_SPREADSHEET_ID`, лист `Потребность ` (с концевым пробелом) | `1mnupy…2Akg` | `pipeline.py:62`, `pipeline.py:238` |
+| `TABIYA_SPREADSHEET_ID`, лист `Вакансии` | — (env, в коде нет) | `pipeline.py`, `.env` |
 
 **Что читает.** КНК — транспонированную матрицу «колонка = город, строка = параметр» (`sheets_adapter.py:366-409`, разбор
 `matrix_vacancy_extractor.py:38-49`). Аметист — построчно, с протяжкой региона из строк-разделителей (`ametist_sheet_extractor.py:218-251`).
 Маркетстафф — построчно, с протяжкой объединённых ячеек блока объекта (`marketstaff_sheet_extractor.py:410-419`) и классификацией нестабильных
-колонок 4–7 по форме значения (`marketstaff_sheet_extractor.py:458-481`).
+колонок 4–7 по форме значения (`marketstaff_sheet_extractor.py:458-481`). Табия — построчно, но строка листа = ОБЪЕКТ, а не позиция: в ячейке «ВАКАНСИИ И ПОТРЕБНОСТЬ» несколько вакансий плюс сноски к ним, и заявка штатно даёт несколько позиций (`tabiya_sheet_extractor.py`). Справочные листы книги эта версия не читает намеренно — см. шапку модуля.
 
 **Что пишет.** Только витрину, **полной перезаписью листа**, не upsert: `worksheet.update("A1:{col}{n}", values, value_input_option="USER_ENTERED")` и затем `batch_clear` хвоста прошлой, более длинной выгрузки (`registry/export_sheets.py:54-59`). Вызов — в
 конце прогона под флагом `SHEETS_EXPORT_ENABLED` (`pipeline.py:335-342`). Мотив в докстроке `registry/export_sheets.py:3-11`: таблица перестала быть
@@ -265,6 +266,7 @@ source/geo/возрасту/сменам/полу, запуски пайплай
 | AAA+ | `aaaplus` | AAA+ | Telegram-канал | Telethon userbot, `StringSession` | env `TELEGRAM_AAAPLUS_CHAT_ID` | 09:30, reset | работает |
 | Аметист | `ametist` | Аметист | Google Sheets + тексты постов из TG | сервисный аккаунт + userbot | `pipeline.py:62`, лист `Потребность ` | 13:30 | работает |
 | Маркетстафф | `marketstaff` | Маркетстафф | Google Sheets | сервисный аккаунт | `pipeline.py:56-58`, лист `Объекты МО` | 12:00, reset | работает |
+| Табия | `tabiya` | Табия | Google Sheets | сервисный аккаунт | env `TABIYA_SPREADSHEET_ID`, лист `Вакансии` | 12:00, reset | работает |
 | Вручную | `manual` | Вручную | форма `/registry/manual` | HTTP Basic | — | по требованию | работает |
 | Витрина | — | — | Google Sheets, запись | сервисный аккаунт | `pipeline.py:47-48` | после каждого прогона | работает |
 | Я.Диск Градуса | — | — | публичный REST | нет (публичная ссылка) | env `VAHTAPRO_DISK_URL` | параллельно прогону `vahtapro` | работает |

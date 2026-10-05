@@ -97,6 +97,7 @@ SOURCE_TITLES = {
     "aaaplus": "AAA+",
     "ametist": "Аметист",
     "marketstaff": "Маркетстафф",
+    "tabiya": "Табия",
     "manual": "Вручную",
 }
 
