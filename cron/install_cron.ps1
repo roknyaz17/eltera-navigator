@@ -5,7 +5,7 @@
 #
 # Расписание:
 #   09:30  →  EltreaBot-Morning-Telegram   ВахтаПро + AAA+ (со сбросом этих 2)
-#   12:00  →  EltreaBot-Noon-Tables        КПК + Yappi + Маркетстафф (со сбросом этих 3)
+#   12:00  →  EltreaBot-Noon-Tables        КПК + Yappi + Маркетстафф + Табия (со сбросом этих 4)
 #   13:00  →  EltreaBot-Afternoon-Vahtapro ВахтаПро (со сбросом только ВахтаПро)
 
 $ErrorActionPreference = "Stop"
@@ -46,7 +46,7 @@ Register-Bot-Task `
     -Name "EltreaBot-Noon-Tables" `
     -Bat  "F:\eltera-bot\cron\noon_tables.bat" `
     -At   "12:00pm" `
-    -Desc "КПК + Yappi + Маркетстафф со сбросом is_active этих трёх source."
+    -Desc "КПК + Yappi + Маркетстафф + Табия со сбросом is_active этих четырёх source."
 
 Register-Bot-Task `
     -Name "EltreaBot-Afternoon-Vahtapro" `

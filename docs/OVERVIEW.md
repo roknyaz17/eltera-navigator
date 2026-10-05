@@ -72,7 +72,7 @@ Jinja-рендера (`app.py:373-375`), данные тянет `fetch('/api/na
 (`project_kb.py:547-724`) и связывается с позициями через `position_kb` (`project_kb.py:458-510`).
 
 **Расписание.** APScheduler, `Europe/Moscow`, четыре задачи: 09:30 vahtapro+aaaplus с reset,
-12:00 kpk+yappi+marketstaff с reset, 13:00 vahtapro без reset, 13:30 ametist без reset
+12:00 kpk+yappi+marketstaff+tabiya с reset, 13:00 vahtapro без reset, 13:30 ametist без reset
 (`app.py:84-109`).
 
 **Доступ.** Одна общая пара HTTP Basic из `WEB_USER`/`WEB_PASSWORD` (`app.py:191-207`). Ролей нет.
@@ -196,7 +196,7 @@ positions (+ request_positions, request_revisions, position_kb)
 | **Позиция** | Единица потребности: должность на объекте в городе. Живёт дольше заявки, связь M:N. ID `ELT-2026-000123-01` | `positions` (`registry/db.py:89-116`), `request_positions` (`:122-128`); `registry/ids.py:34-35` |
 | **Контрагент** | Двусмысленный термин. (1) поле `counterparty` позиции — заказчик, как его назвал источник; (2) карточка в панели `/navigator` — это **источник**, а не поле `counterparty` | колонка `counterparty` (`registry/models.py:21-43`); карточки — `navigator_api.counterparties_block:555-617` (объяснение в докстроке :556-563) |
 | **Объект** | Склад, производство, площадка — где физически работают. У Аметиста и КНК заказчик приезжает именно сюда | поле `object_name` (`registry/models.py:21-43`); приоритет при подборе ставки — `rates.client_key:132-139` |
-| **Источник** | Подрядчик-поставщик заявок. Ключ (`kpk`, `yappi`, `vahtapro`, `aaaplus`, `ametist`, `marketstaff`, `manual`) неизменен: он в колонке `source`, в именах env и в метках Prometheus; отображаемое имя меняется отдельно | `pipeline.py:102-119`; `registry/sources.py:9-15`; названия — `registry/labels.py:93-101` |
+| **Источник** | Подрядчик-поставщик заявок. Ключ (`kpk`, `yappi`, `vahtapro`, `aaaplus`, `ametist`, `marketstaff`, `tabiya`, `manual`) неизменен: он в колонке `source`, в именах env и в метках Prometheus; отображаемое имя меняется отдельно | `pipeline.py:102-119`; `registry/sources.py:9-15`; названия — `registry/labels.py:93-101` |
 | **Снимок** | Сообщение или таблица, которую можно считать полным состоянием источника. Опознаётся `snapshot_marker`; таблицы — снимок всегда. Следствие: позиции вне снимка гасятся (`is_active=0`) | `vahtapro_message_processor.py:26`, `aaaplus_message_processor.py:22`; флаг — `pipeline.py:249-270`; гашение — `registry/ingest.py:597-618` |
 | **Ревизия** | Номер версии текста заявки. При изменении содержимого прежняя версия уходит в архив, счётчик растёт | `requests.revision` (`registry/db.py:43-68`), `request_revisions` (`:77-87`); `_archive_revision` (`registry/ingest.py:223-235`) |
 | **Fingerprint** | Ключ склейки позиции: md5 от шести нормализованных полей (counterparty, city, vacancy_name, object_name, work_format, shift_type), первые 12 символов. Отвечает на вопрос «это та же позиция?» | `registry/normalize.py:497-510`; состав — `registry/models.py:113-120`; UNIQUE `(source, fingerprint)` — `registry/db.py:104` |

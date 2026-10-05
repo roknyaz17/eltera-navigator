@@ -23,6 +23,7 @@ from ametist_sheet_extractor import AmetistSheetExtractor
 from telegram_post_fetcher import TelegramPostFetcher
 from marketstaff_sheet_extractor import MarketstaffSheetExtractor
 from matrix_vacancy_extractor import MatrixToVacanciesService
+from tabiya_sheet_extractor import TabiyaSheetExtractor
 from project_kb import link_positions as link_project_folders
 from project_kb import refresh_if_stale as refresh_project_kb
 from registry.export_sheets import export_to_sheets
@@ -65,6 +66,21 @@ AMETIST_URL = f"https://docs.google.com/spreadsheets/d/{AMETIST_SPREADSHEET_ID}"
 # этого уже извлечённые поля позиции нельзя.
 AMETIST_POSTS_CACHE = os.getenv("TELEGRAM_POSTS_CACHE", "data/telegram_posts.json")
 
+# Табия — книга «Заявка на подбор Табия», лист «Вакансии»: одна строка = один
+# объект, в ячейке «ВАКАНСИИ И ПОТРЕБНОСТЬ» несколько вакансий. См.
+# tabiya_sheet_extractor.py.
+#
+# Идентификатор книги — из переменной окружения, а не константой рядом с
+# остальными: репозиторий публичный, и ссылка на таблицу контрагента в нём
+# лежать не должна. Константы выше — старые, их наличие в коде признано
+# ошибкой и повторять её не нужно.
+TABIYA_SPREADSHEET_ID = os.getenv("TABIYA_SPREADSHEET_ID", "").strip()
+TABIYA_URL = (
+    f"https://docs.google.com/spreadsheets/d/{TABIYA_SPREADSHEET_ID}"
+    if TABIYA_SPREADSHEET_ID else ""
+)
+TABIYA_SHEET_NAME = "Вакансии"
+
 
 def _ametist_post_fetcher():
     """Забиратель описаний из Telegram или None, если userbot не настроен.
@@ -106,6 +122,7 @@ SOURCE_NAMES: Dict[str, str] = {
     "aaaplus": "AAA+",
     "ametist": "Аметист",
     "marketstaff": "Маркетстафф",
+    "tabiya": "Табия",
 }
 ALL_SOURCES = list(SOURCE_NAMES.keys())
 
@@ -239,12 +256,44 @@ async def _collect_requests(
         ))
         aliases.append("ametist")
 
+    if "tabiya" in sources:
+        # Нет идентификатора книги — ветку не добавляем вовсе (как
+        # _ametist_post_fetcher при пустом TELEGRAM_SESSION). Важно именно не
+        # добавлять: пустая пачка от источника приёмом снимком не считается,
+        # а вот заявка с пустым spreadsheet_id уехала бы в gspread и упала.
+        if not TABIYA_SPREADSHEET_ID:
+            # Уровень ERROR, а не WARNING: Табия стоит в JOBS («noon_tables»),
+            # то есть её прогона ждут. Молчаливый пропуск источника — это
+            # позиции, которые неограниченно долго живут со старыми данными.
+            # Метрику PIPE_RUNS здесь не трогаем: на стенде без Табии это
+            # штатное состояние, и алерт звенел бы каждый прогон.
+            logger.error(
+                "[Табия] TABIYA_SPREADSHEET_ID пуст — источник пропущен; "
+                "его позиции останутся с прежними данными"
+            )
+        else:
+            tabiya_ex = TabiyaSheetExtractor(sheets, vacancy_parser)
+            tasks.append(tabiya_ex.collect_requests(
+                tabiya_spreadsheet_id=TABIYA_SPREADSHEET_ID,
+                tabiya_sheet_name=TABIYA_SHEET_NAME,
+                source_url=TABIYA_URL,
+            ))
+            aliases.append("tabiya")
+
     collected = await asyncio.gather(*tasks, return_exceptions=True)
 
     out: Dict[str, tuple] = {}
     for alias, result in zip(aliases, collected):
         if isinstance(result, Exception):
             logger.exception(f"[{alias}] сбор заявок упал: {result}")
+            # Алиас выпадает из batches, значит в stats его не будет и
+            # «успешным» прогон не посчитается. Но и неудачным он до сих пор
+            # тоже не считался: метрика PIPE_RUNS молчала, панель показывала
+            # «ok», а единственным следом сбоя была строка в логе. Отмечаем
+            # отказ здесь — иначе менеджеры неограниченно долго работают по
+            # замороженным данным и об этом не узнают.
+            if _METRICS_OK:
+                M.PIPE_RUNS.labels(source=alias, status="failed").inc()
             continue
         # Таблицы всегда приходят целиком, поэтому это полный снимок:
         # позиции, которых в нём нет, гасятся.
@@ -464,6 +513,17 @@ async def run_pipeline(sources: List[str], reset: bool = False) -> Dict[str, Dic
             sheets_lock=sheets_lock,
         ))
         aliases.append("ametist")
+
+    if "tabiya" in sources:
+        # Прежний путь (запись напрямую в Google Таблицу) для Табии не
+        # реализован намеренно: это ~100 строк кода, существующего только как
+        # аварийный тумблер REGISTRY_ENABLED=0. Предупреждение здесь нужно,
+        # чтобы молчаливое отсутствие Табии в прогоне не выглядело потерей
+        # данных.
+        logger.warning(
+            "[Табия] источник работает только через реестр; при REGISTRY_ENABLED=0 "
+            "он не прогоняется"
+        )
 
     if not tasks:
         logger.warning("Нет ни одной задачи для запуска")

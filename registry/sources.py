@@ -12,6 +12,7 @@ SOURCE_VAHTAPRO = "vahtapro"
 SOURCE_AAAPLUS = "aaaplus"
 SOURCE_AMETIST = "ametist"
 SOURCE_MARKETSTAFF = "marketstaff"
+SOURCE_TABIYA = "tabiya"
 SOURCE_MANUAL = "manual"
 
 
