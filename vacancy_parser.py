@@ -213,6 +213,12 @@ class VacancyParserService:
             model=model_name,
             temperature=temperature,
             max_tokens=max_tokens,
+            # langchain шлёт лимит как max_completion_tokens, а агент Timeweb
+            # это поле не читает и режет ответ на 4096 токенах. С октября 2026
+            # за агентом «думающая» модель: на длинной заявке скрытые
+            # рассуждения съедали весь лимит, и разбор приходил пустой строкой.
+            # Старое поле max_tokens агент соблюдает.
+            extra_body={"max_tokens": max_tokens},
         )
         self.prompt_template = ChatPromptTemplate.from_messages([
             ("system", self.SYSTEM_PROMPT),
@@ -312,8 +318,42 @@ class VacancyParserService:
                 return None
             return parsed
         except json.JSONDecodeError as exc:
+            rescued = self._last_json_array(raw_json)
+            if rescued is not None:
+                logger.warning(
+                    f"JSON с посторонним текстом (попытка {attempt + 1}): {exc} — "
+                    f"взят последний целый массив, вакансий: {len(rescued)}"
+                )
+                return rescued
             logger.warning(f"Ошибка парсинга JSON (попытка {attempt + 1}): {exc}")
             return None
+
+    @staticmethod
+    def _last_json_array(raw: str) -> Optional[List[Dict]]:
+        """Последний целый JSON-массив объектов в ответе, если он там есть.
+
+        Думающая модель иногда пишет рассуждение прямо в ответ:
+        «[{"counterparty": null} — исключаю, так как контрагент в тексте не
+        назван. Итог:][{…}]». Кусок от первой «[» до последней «]» тогда не
+        JSON, хотя настоящий ответ в нём есть и идёт последним. 21.10.2026 так
+        терялся «Склад медикаментов» МЕЛИОРа. Вложенные массивы не
+        рассматриваем: после удачного разбора продолжаем с его конца.
+        """
+        decoder = json.JSONDecoder()
+        found: Optional[List[Dict]] = None
+        pos = 0
+        while True:
+            start = raw.find("[", pos)
+            if start == -1:
+                return found
+            try:
+                value, end = decoder.raw_decode(raw, start)
+            except json.JSONDecodeError:
+                pos = start + 1
+                continue
+            if isinstance(value, list) and value and all(isinstance(v, dict) for v in value):
+                found = value
+            pos = end
 
     def _enrich(self, data: List[Dict], source: str, source_url: str) -> List[Dict]:
         """Дополняет вакансии служебными полями и vacancy_id. In-place."""

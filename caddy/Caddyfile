@@ -179,3 +179,20 @@
 		respond 404
 	}
 }
+
+# Веб-морда выдачи доступов (/opt/dostupdavalka, контейнер dostupdavalka в сети eltrea-net).
+dostupdavalka.eltera-ai.ru {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=300"
+		X-Frame-Options DENY
+		-Server
+	}
+	reverse_proxy dostupdavalka:8000 {
+		header_up X-Forwarded-For {remote_host}
+	}
+	log {
+		output stdout
+		format console
+	}
+}

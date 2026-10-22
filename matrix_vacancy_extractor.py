@@ -47,6 +47,7 @@ class MatrixToVacanciesService:
                 counterparty_hint=counterparty_name,
                 raw_payload={"city": city, **raw_props},
                 field_defaults={"counterparty": counterparty_name, "city": city},
+                expects_vacancies=True,
             ))
 
         logger.info(f"[КНК] из матрицы взято {len(out)} городов с потребностью")

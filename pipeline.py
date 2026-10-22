@@ -18,12 +18,14 @@ try:
 except ImportError:
     _METRICS_OK = False
 
+import melior_kb
 from aaaplus_message_processor import AaaPlusMessageProcessor
 from ametist_sheet_extractor import AmetistSheetExtractor
+from melior_message_processor import MeliorMessageProcessor
 from telegram_post_fetcher import TelegramPostFetcher
 from marketstaff_sheet_extractor import MarketstaffSheetExtractor
-from matrix_vacancy_extractor import MatrixToVacanciesService
 from tabiya_sheet_extractor import TabiyaSheetExtractor
+from matrix_vacancy_extractor import MatrixToVacanciesService
 from project_kb import link_positions as link_project_folders
 from project_kb import refresh_if_stale as refresh_project_kb
 from registry.export_sheets import export_to_sheets
@@ -66,21 +68,6 @@ AMETIST_URL = f"https://docs.google.com/spreadsheets/d/{AMETIST_SPREADSHEET_ID}"
 # этого уже извлечённые поля позиции нельзя.
 AMETIST_POSTS_CACHE = os.getenv("TELEGRAM_POSTS_CACHE", "data/telegram_posts.json")
 
-# Табия — книга «Заявка на подбор Табия», лист «Вакансии»: одна строка = один
-# объект, в ячейке «ВАКАНСИИ И ПОТРЕБНОСТЬ» несколько вакансий. См.
-# tabiya_sheet_extractor.py.
-#
-# Идентификатор книги — из переменной окружения, а не константой рядом с
-# остальными: репозиторий публичный, и ссылка на таблицу контрагента в нём
-# лежать не должна. Константы выше — старые, их наличие в коде признано
-# ошибкой и повторять её не нужно.
-TABIYA_SPREADSHEET_ID = os.getenv("TABIYA_SPREADSHEET_ID", "").strip()
-TABIYA_URL = (
-    f"https://docs.google.com/spreadsheets/d/{TABIYA_SPREADSHEET_ID}"
-    if TABIYA_SPREADSHEET_ID else ""
-)
-TABIYA_SHEET_NAME = "Вакансии"
-
 
 def _ametist_post_fetcher():
     """Забиратель описаний из Telegram или None, если userbot не настроен.
@@ -96,12 +83,33 @@ def _ametist_post_fetcher():
 
 # Верхний предел сообщений за обход (cap). Реальный фильтр — по дате (с 07:00 МСК).
 TG_LIMIT = 20
+# МЕЛИОР читается целиком: в канале лежит ровно актуальное состояние (старое
+# контрагент удаляет), и это полсотни постов. Предел с запасом — на случай,
+# если чистить перестанут; тогда в выборку попадут свежие, а не случайные.
+MELIOR_LIMIT = int(os.getenv("TELEGRAM_MELIOR_LIMIT", "60"))
+# Градус читается окном последних сообщений, без отсечки «с 07:00 сегодня».
+# Каталог он выкладывает блоками (Москва, Регионы, …) и перепощивает их не
+# каждый день, а в пачке есть «снимок дня» — по нему реестр гасит всё, чего в
+# выборке нет. С фильтром по дате в снимок попадал только сегодняшний блок, и
+# половина каталога (Набережные Челны, Данон, Марс, Миксит) пропадала из
+# «Навигатора» до следующего поста. Окно, а не весь канал: сорока сообщений
+# хватает на полный круг блоков, а неизменившиеся заявки реестр не
+# перепарсивает — сверяет content_hash.
+VAHTAPRO_LIMIT = int(os.getenv("TELEGRAM_VAHTAPRO_LIMIT", "40"))
 # С какого часа МСК берём сегодняшние сообщения Telegram.
 TG_SINCE_HOUR_MSK = 7
 MSK = timezone(timedelta(hours=3))
 
 # Аметист переведён с Telegram-чата на Google Таблицу (см. AMETIST_SPREADSHEET_ID),
 # поэтому AMETIST_LIMIT / AMETIST_LOOKBACK_DAYS больше не нужны.
+
+
+def _refresh_melior_kb() -> None:
+    """Перечитывает таблицу объектов МЕЛИОРа. Недоступна — работаем без справок."""
+    try:
+        melior_kb.refresh()
+    except Exception as exc:  # noqa: BLE001 — таблица не должна ронять прогон
+        logger.warning(f"[МЕЛИОР] таблица объектов не прочитана: {exc}")
 
 
 def _since_today_msk() -> datetime:
@@ -115,6 +123,17 @@ def _since_today_msk() -> datetime:
     return since
 
 
+# Табия — книга «Заявка на подбор Табия», лист «Вакансии»: одна строка = один
+# объект, в ячейке «ВАКАНСИИ И ПОТРЕБНОСТЬ» несколько вакансий.
+# Идентификатор книги берётся из окружения, а не константой рядом с
+# остальными: репозиторий публичный, ссылке на таблицу контрагента в нём не место.
+TABIYA_SPREADSHEET_ID = os.getenv("TABIYA_SPREADSHEET_ID", "").strip()
+TABIYA_URL = (
+    f"https://docs.google.com/spreadsheets/d/{TABIYA_SPREADSHEET_ID}"
+    if TABIYA_SPREADSHEET_ID else ""
+)
+TABIYA_SHEET_NAME = "Вакансии"
+
 SOURCE_NAMES: Dict[str, str] = {
     "kpk": "КНК",
     "yappi": "ЯППИ",
@@ -122,6 +141,7 @@ SOURCE_NAMES: Dict[str, str] = {
     "aaaplus": "AAA+",
     "ametist": "Аметист",
     "marketstaff": "Маркетстафф",
+    "melior": "МЕЛИОР",
     "tabiya": "Табия",
 }
 ALL_SOURCES = list(SOURCE_NAMES.keys())
@@ -154,31 +174,45 @@ def parse_sources(raw: Optional[str]) -> List[str]:
 async def _read_telegram(sources: List[str]) -> Dict[str, Optional[List[dict]]]:
     """Читает сообщения каналов в одном async-сеансе userbot'а.
 
-    Аметист переехал на таблицу, поэтому здесь только Градус и AAA+.
+    Аметист переехал на таблицу, поэтому здесь Градус, AAA+ и МЕЛИОР.
     """
     need_vahtapro = "vahtapro" in sources
     need_aaaplus = "aaaplus" in sources
+    need_melior = "melior" in sources
     out: Dict[str, Optional[List[dict]]] = {
-        "vahtapro": None, "aaaplus": None,
+        "vahtapro": None, "aaaplus": None, "melior": None,
     }
 
-    if not (need_vahtapro or need_aaaplus):
+    if not (need_vahtapro or need_aaaplus or need_melior):
         return out
 
     since = _since_today_msk()
-    logger.info(f"=== Чтение Telegram (сообщения с {since:%Y-%m-%d %H:%M %Z}) ===")
+    logger.info(f"=== Чтение Telegram (AAA+ — с {since:%Y-%m-%d %H:%M %Z}, "
+                f"Градус и МЕЛИОР — окном последних сообщений) ===")
     async with TelegramUserbot() as bot:
         me = await bot.whoami()
         logger.info(f"Userbot: {me['first_name']} {me.get('last_name') or ''} "
                     f"(@{me.get('username') or '—'}, id={me['id']})")
         if need_vahtapro:
             chat_id = int(os.environ["TELEGRAM_VAHTAPRO_CHAT_ID"])
-            out["vahtapro"] = await bot.get_messages(chat_id, limit=TG_LIMIT, after=since)
-            logger.info(f"Градус: получено {len(out['vahtapro'])} сообщений за период")
+            out["vahtapro"] = await bot.get_messages(chat_id, limit=VAHTAPRO_LIMIT)
+            logger.info(f"Градус: получено {len(out['vahtapro'])} сообщений "
+                        f"(окно последних {VAHTAPRO_LIMIT}, без отсечки по дате)")
         if need_aaaplus:
             chat_id = int(os.environ["TELEGRAM_AAAPLUS_CHAT_ID"])
             out["aaaplus"] = await bot.get_messages(chat_id, limit=TG_LIMIT, after=since)
             logger.info(f"AAA+: получено {len(out['aaaplus'])} сообщений за период")
+        if need_melior:
+            # МЕЛИОР читается целиком, а не «за сегодня»: контрагент удаляет
+            # отработавшие посты, и в канале всегда лежит ровно то, что сейчас
+            # актуально, — полсотни сообщений. Читать «с утра» здесь нельзя:
+            # постов бывает два в неделю, и в обычный день прогон не увидел бы
+            # ничего, а гасить по такой выборке было бы нечем. Заявки с
+            # неизменившимся текстом реестр не перепарсивает (сверяет
+            # content_hash), поэтому полное чтение почти ничего не стоит.
+            chat_id = int(os.environ["TELEGRAM_MELIOR_CHAT_ID"])
+            out["melior"] = await bot.get_messages(chat_id, limit=MELIOR_LIMIT)
+            logger.info(f"МЕЛИОР: получено {len(out['melior'])} сообщений (канал целиком)")
     return out
 
 
@@ -257,16 +291,11 @@ async def _collect_requests(
         aliases.append("ametist")
 
     if "tabiya" in sources:
-        # Нет идентификатора книги — ветку не добавляем вовсе (как
-        # _ametist_post_fetcher при пустом TELEGRAM_SESSION). Важно именно не
-        # добавлять: пустая пачка от источника приёмом снимком не считается,
-        # а вот заявка с пустым spreadsheet_id уехала бы в gspread и упала.
+        # Нет идентификатора книги — ветку не добавляем вовсе: заявка с пустым
+        # spreadsheet_id уехала бы в gspread и упала. Уровень ERROR, а не
+        # WARNING: Табия стоит в полуденной задаче, её прогона ждут, и
+        # молчаливый пропуск означает позиции со старыми данными.
         if not TABIYA_SPREADSHEET_ID:
-            # Уровень ERROR, а не WARNING: Табия стоит в JOBS («noon_tables»),
-            # то есть её прогона ждут. Молчаливый пропуск источника — это
-            # позиции, которые неограниченно долго живут со старыми данными.
-            # Метрику PIPE_RUNS здесь не трогаем: на стенде без Табии это
-            # штатное состояние, и алерт звенел бы каждый прогон.
             logger.error(
                 "[Табия] TABIYA_SPREADSHEET_ID пуст — источник пропущен; "
                 "его позиции останутся с прежними данными"
@@ -286,14 +315,6 @@ async def _collect_requests(
     for alias, result in zip(aliases, collected):
         if isinstance(result, Exception):
             logger.exception(f"[{alias}] сбор заявок упал: {result}")
-            # Алиас выпадает из batches, значит в stats его не будет и
-            # «успешным» прогон не посчитается. Но и неудачным он до сих пор
-            # тоже не считался: метрика PIPE_RUNS молчала, панель показывала
-            # «ok», а единственным следом сбоя была строка в логе. Отмечаем
-            # отказ здесь — иначе менеджеры неограниченно долго работают по
-            # замороженным данным и об этом не узнают.
-            if _METRICS_OK:
-                M.PIPE_RUNS.labels(source=alias, status="failed").inc()
             continue
         # Таблицы всегда приходят целиком, поэтому это полный снимок:
         # позиции, которых в нём нет, гасятся.
@@ -303,6 +324,7 @@ async def _collect_requests(
     for alias, processor_cls in (
             ("vahtapro", VahtaProMessageProcessor),
             ("aaaplus", AaaPlusMessageProcessor),
+            ("melior", MeliorMessageProcessor),
     ):
         if alias not in sources or tg_msgs.get(alias) is None:
             continue
@@ -312,6 +334,18 @@ async def _collect_requests(
         requests, had_snapshot = processor.collect_requests(
             messages=tg_msgs[alias], source=alias, source_url=url,
         )
+        # У МЕЛИОРа снимок — сам канал: мы прочитали его целиком, значит всё,
+        # чего в пачке нет, контрагент уже убрал, и позиция должна погаснуть.
+        if alias == "melior":
+            had_snapshot = True
+            # Фотоальбомы объекта живут ссылкой в посте, а не в таблице:
+            # привязываем их к карточкам по свежей пачке сообщений.
+            try:
+                melior_kb.attach_disk_albums(
+                    tg_msgs[alias], query_fn=processor.object_query,
+                )
+            except Exception:  # noqa: BLE001 — прогон из-за фотографий не падает
+                logger.exception("[МЕЛИОР] не удалось привязать фотоальбомы объектов")
         # Без «снимка дня» в пачке гасить нечего: в канале за день приходят
         # только отдельные апдейты, и снапшот-логика выключила бы всё
         # остальное. reset=True в задании планировщика означает ровно то же,
@@ -333,9 +367,17 @@ async def run_registry_pipeline(sources: List[str], reset: bool = False) -> Dict
         asyncio.create_task(asyncio.to_thread(refresh_project_kb))
         if "vahtapro" in sources else None
     )
+    # То же для МЕЛИОРа, только база знаний у него — таблица «Объекты Мелиор»:
+    # карточки объектов нужны уже на сборе заявок, туда они идут справкой.
+    melior_task = (
+        asyncio.create_task(asyncio.to_thread(_refresh_melior_kb))
+        if "melior" in sources else None
+    )
     tg_msgs = await _read_telegram(sources)
     if kb_task is not None:
         await kb_task
+    if melior_task is not None:
+        await melior_task
     batches = await _collect_requests(sources, sheets, vacancy_parser, tg_msgs, reset)
     if not batches:
         logger.warning("Ни один источник не отдал заявок")
@@ -353,6 +395,14 @@ async def run_registry_pipeline(sources: List[str], reset: bool = False) -> Dict
             await asyncio.to_thread(link_project_folders)
         except Exception:  # noqa: BLE001 — прогон из-за ссылок на фото не падает
             logger.exception("Не удалось связать позиции с папками проектов")
+
+    if "melior" in sources:
+        # Те же кнопки, но по карточкам объектов из таблицы: позиции появились
+        # только что, и до ингеста связывать было нечего.
+        try:
+            await asyncio.to_thread(link_project_folders, None, "melior")
+        except Exception:  # noqa: BLE001 — прогон из-за ссылок на фото не падает
+            logger.exception("Не удалось связать позиции МЕЛИОРа с карточками объектов")
 
     out: Dict[str, Dict[str, int]] = {}
     for alias, item in stats.items():
@@ -420,6 +470,7 @@ async def run_pipeline(sources: List[str], reset: bool = False) -> Dict[str, Dic
     tg_msgs = await _read_telegram(sources)
     vahtapro_msgs = tg_msgs["vahtapro"]
     aaaplus_msgs = tg_msgs["aaaplus"]
+    melior_msgs = tg_msgs["melior"]
 
     # Сброс is_active=FALSE для выбранных source
     if reset:
@@ -502,6 +553,19 @@ async def run_pipeline(sources: List[str], reset: bool = False) -> Dict[str, Dic
         ))
         aliases.append("aaaplus")
 
+    if "melior" in sources and melior_msgs is not None:
+        chat_id = int(os.environ["TELEGRAM_MELIOR_CHAT_ID"])
+        url = f"https://t.me/c/{abs(chat_id) - 1000000000000}"
+        proc = MeliorMessageProcessor(sheets, vacancy_parser)
+        tasks.append(proc.aprocess_messages(
+            messages=melior_msgs,
+            target_spreadsheet_id=TARGET_SPREADSHEET_ID,
+            target_sheet_name=TARGET_SHEET_NAME,
+            source_url=url,
+            sheets_lock=sheets_lock,
+        ))
+        aliases.append("melior")
+
     if "ametist" in sources:
         ametist_ex = AmetistSheetExtractor(sheets, vacancy_parser, _ametist_post_fetcher())
         tasks.append(ametist_ex.extract_and_save(
@@ -513,17 +577,6 @@ async def run_pipeline(sources: List[str], reset: bool = False) -> Dict[str, Dic
             sheets_lock=sheets_lock,
         ))
         aliases.append("ametist")
-
-    if "tabiya" in sources:
-        # Прежний путь (запись напрямую в Google Таблицу) для Табии не
-        # реализован намеренно: это ~100 строк кода, существующего только как
-        # аварийный тумблер REGISTRY_ENABLED=0. Предупреждение здесь нужно,
-        # чтобы молчаливое отсутствие Табии в прогоне не выглядело потерей
-        # данных.
-        logger.warning(
-            "[Табия] источник работает только через реестр; при REGISTRY_ENABLED=0 "
-            "он не прогоняется"
-        )
 
     if not tasks:
         logger.warning("Нет ни одной задачи для запуска")
@@ -541,7 +594,7 @@ async def run_pipeline(sources: List[str], reset: bool = False) -> Dict[str, Dic
             if _METRICS_OK:
                 M.PIPE_RUNS.labels(source=alias, status="failed").inc()
             continue
-        fmt = _fmt_telegram(stats) if alias in ("vahtapro", "aaaplus") else _fmt_table(stats)
+        fmt = _fmt_telegram(stats) if alias in ("vahtapro", "aaaplus", "melior") else _fmt_table(stats)
         logger.info(f"{SOURCE_NAMES[alias]}: {fmt}")
         out[alias] = stats
 

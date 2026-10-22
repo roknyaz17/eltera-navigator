@@ -55,8 +55,10 @@ SOURCE_SCHEDULE = {
     "kpk": "12:00",
     "yappi": "12:00",
     "marketstaff": "12:00",
+    "tabiya": "12:00",
     "ametist": "13:30",
     "manual": "вручную",
+    "internal": "вручную",
 }
 
 SOURCE_KIND = {
@@ -66,8 +68,15 @@ SOURCE_KIND = {
     "kpk": "Google-таблица",
     "yappi": "SeaTable",
     "marketstaff": "Google-таблица",
+    "tabiya": "Google-таблица",
     "manual": "Ручной ввод",
+    "internal": "Шпаргалка Avito",
 }
+
+# За сколько дней считаем заявки с ошибкой разбора в здоровье источника.
+# Неделя: разовый сбой сервиса разбора не должен висеть красным месяцами, но и
+# гаснуть за сутки ему рано — источник чинят не в тот же час.
+FAILED_WINDOW_DAYS = 7
 
 
 # --------------------------------------------------------------- мелкие хелперы
@@ -354,6 +363,207 @@ def shift_type_text(raw: Optional[str]) -> str:
     return {"day": "дневная", "night": "ночная", "mixed": "дневная и ночная"}.get(_s(raw), _s(raw))
 
 
+# ------------------------------------------------------- оформление и выплаты
+#
+# Своей колонки у этих двух вещей в реестре нет и заводить её ради одного
+# источника не стали: у половины контрагентов такой строки в заявке нет вовсе,
+# и колонка стояла бы пустой, притворяясь пробелом. Поэтому читаем текстом — и
+# из распознанных полей, и из самой заявки: «Оформление ТК, СЗ» контрагент
+# пишет одной строкой, а парсер кладёт её в требования не всегда.
+
+# Поля позиции, где эти формулировки реально встречаются.
+_HIRE_FIELDS = (
+    "requirements", "advantages", "risks", "duties", "schedule",
+    "housing_conditions", "transport_terms", "requirements_raw",
+)
+
+# «т.к.» («так как») из поиска исключаем: иначе каждая вторая заявка
+# превращается в «оформление по ТК».
+HIRE_FORMS = (
+    ("ТК", re.compile(r"(?<![а-яёa-z.])тк(?![а-яё])|трудов\w*\s+договор", re.I)),
+    ("ГПХ", re.compile(r"(?<![а-яё])гпх(?![а-яё])|гражданско[- ]правов", re.I)),
+    ("СЗ", re.compile(r"(?<![а-яё])сз(?![а-яё])|(?<![а-яё])смз(?![а-яё])|самозанят|(?<![а-яё])нпд(?![а-яё])", re.I)),
+)
+
+def hire_text(row) -> str:
+    """Весь текст позиции, где может быть сказано про оформление и выплаты."""
+    parts = [_s(_col(row, name)) for name in _HIRE_FIELDS]
+    parts.append(_s(_col(row, "raw_text")))
+    return "\n".join(part for part in parts if part)
+
+
+def hire_forms(row) -> List[str]:
+    """Формы оформления, названные в заявке: ТК, ГПХ, СЗ.
+
+    Их может быть несколько сразу — контрагент нередко даёт выбор
+    («Оформление ТК, СЗ»), и это не противоречие, а две возможности.
+    """
+    text = hire_text(row)
+    return [name for name, pattern in HIRE_FORMS if pattern.search(text)]
+
+
+# Как получить деньги: на карту третьего лица и наличными. Рекрутёру это
+# спрашивают прямо — у кандидата арестована карта или её нет вовсе, — и ответ
+# «в заявке не сказано» тут хуже, чем «нельзя»: человек поедет и не получит
+# зарплату. Поэтому три состояния, а не флаг: yes / no / «не сказано».
+#
+# Пишут это по-разному (срез на 07.10.2026):
+#   КНК      «Получение ЗП на 3-е лицо: 3-е лицо должно быть … САМОЗАНЯТЫМ»,
+#            и там же «НЕТ ВЫПЛАТ НА 3-Е ЛИЦО»;
+#   МЕЛИОР   «можно на карту 3-го лица», «на карту 3 лица», «возможен
+#            НАЛИЧНЫЙ РАСЧЕТ», «получать ЗП наличными»;
+#   Аметист  «выплаты по СМЗ (можно оформить на себя или на третье лицо)
+#            через «Консоль» (в Консоли можно внести реквизиты карты 3-го
+#            лица)» — самозанятость на третье лицо и есть выплата ему;
+#   Градус   «разрешены выплаты на карту третьего лица (все банки, кроме
+#            цифровых …)» — в описании проекта на диске.
+
+_THIRD_PERSON = re.compile(
+    r"(?<![а-яё\d])(?:треть\w*|3\s*-?\s*(?:е|ье|го|ьего|ему|ьему|м|х|их)?)\s+лиц\w*",
+    re.I,
+)
+# «3 лица» само по себе — не про деньги. Рядом должно стоять, что именно на
+# это лицо делают: платят, переводят, оформляют самозанятость. «Передача
+# данных третьим лицам» под это не попадает.
+_THIRD_CONTEXT = re.compile(
+    r"(?<![а-яё])(?:карт\w*|выплат\w*|оплат\w*|перевод\w*|перечисл\w*|зп|з/п|"
+    r"зарплат\w*|деньг\w*|получ\w*|оформ\w*|смз|самозанят\w*|консол\w*|реквизит\w*)",
+    re.I,
+)
+# Наличные — только как способ получить зарплату. «Иметь при себе наличкой
+# 500 руб за бельё» (Черкизово у Градуса) — это платит кандидат, а не ему;
+# «безналичный расчёт» и «наличие СНИЛС» отсекает граница слова.
+_CASH_WORD = r"(?<![а-яё])(?:наличн\w*|наличк\w*|налом|кэш\w*)"
+_CASH = re.compile(
+    _CASH_WORD + r"[^.;\n]{0,15}?расч[её]т"
+    r"|расч[её]т\w*[^.;\n]{0,15}?" + _CASH_WORD
+    + r"|(?<![а-яё])(?:зп|з/п|зарплат\w*|выплат\w*|выплач\w*|аванс\w*|получ\w*)"
+    r"[^.;\n]{0,50}?" + _CASH_WORD
+    + r"|" + _CASH_WORD + r"[^.;\n]{0,15}?(?:зп|з/п|зарплат|выплат|аванс)",
+    re.I,
+)
+# Отрицание ищем только в своём куске фразы, до ближайшей запятой: в
+# «Возможен наличный расчёт, …, спецодежда при доработке не возвращается»
+# «не» относится к спецодежде, а не к наличным.
+_PAY_NEGATION = re.compile(
+    r"(?<![а-яё])(?:нет|нельзя|без|невозможн\w*|запрещ\w*|отсутств\w*|"
+    r"не(?!\s+(?:менее|более|позднее|ранее|раньше))(?=\s))(?![а-яё])",
+    re.I,
+)
+_FRAGMENT_STOP = ".;,\n"
+_NOTE_LONG = 120
+_NOTE_MAX = 200
+
+
+def _bounds(text: str, start: int, end: int, stops: str):
+    left = max(text.rfind(ch, 0, start) for ch in stops) + 1
+    rights = [i for i in (text.find(ch, end) for ch in stops) if i != -1]
+    return left, min(rights) if rights else len(text)
+
+
+def _note(text: str, start: int, end: int) -> str:
+    """Фраза заявки, где это сказано, — как написал контрагент.
+
+    Условия здесь важнее самого «да»: у КНК третье лицо обязано быть
+    самозанятым, у Градуса не годятся цифровые банки. Эмодзи и маркеры
+    списка в начале срезаем. Поля позиции бывают одной фразой через запятую
+    на полэкрана («Питание …, проживание …, возможен наличный расчет, …») —
+    тогда цитату начинаем с того куска, где сказано нужное.
+    """
+    left, right = _bounds(text, start, end, ".;\n")
+    if right - left > _NOTE_LONG:
+        left = max(left, text.rfind(",", 0, start) + 1)
+    note = text[left:right].strip()
+    if len(note) > _NOTE_MAX:
+        note = note[:_NOTE_MAX - 1].rstrip() + "…"
+    return re.sub(r"^[^\w«(]+", "", note)
+
+
+def _pay_hits(text: str):
+    """Упоминания в одном тексте: (вид, yes/no, строка-первоисточник)."""
+    for m in _THIRD_PERSON.finditer(text):
+        sentence = _bounds(text, m.start(), m.end(), ".;\n")
+        before = text[max(sentence[0], m.start() - 50):m.start()]
+        after = text[m.end():min(sentence[1], m.end() + 35)]
+        if not (_THIRD_CONTEXT.search(before) or _THIRD_CONTEXT.search(after)):
+            continue
+        left, right = _bounds(text, m.start(), m.end(), _FRAGMENT_STOP)
+        state = "no" if _PAY_NEGATION.search(text[left:right]) else "yes"
+        yield "third", state, _note(text, m.start(), m.end())
+    for m in _CASH.finditer(text):
+        word = re.search(_CASH_WORD, m.group(0), re.I)
+        at = m.start() + word.start()
+        left, right = _bounds(text, at, at + len(word.group(0)), _FRAGMENT_STOP)
+        state = "no" if _PAY_NEGATION.search(text[left:right]) else "yes"
+        yield "cash", state, _note(text, at, at + len(word.group(0)))
+
+
+def _whole_request(row) -> bool:
+    """Относится ли текст заявки к позиции целиком.
+
+    Пост МЕЛИОРа — список объектов: «💰 Возможен НАЛИЧНЫЙ РАСЧЕТ» стоит под
+    тремя из девятнадцати, а текст заявки у всех девятнадцати позиций один.
+    Читать его целиком — раздать наличные ФМ Логистик Чехову и Кералиту. Так
+    что текст заявки берём, только когда в ней один объект; иначе остаются
+    поля самой позиции и карточка объекта.
+    """
+    positions = _i(_col(row, "req_positions"))
+    if positions is None or positions <= 1:
+        return True
+    return _i(_col(row, "req_objects")) == 1 and not _i(_col(row, "req_blank_objects"))
+
+
+def pay_sources(row) -> List[str]:
+    """Тексты о позиции в порядке доверия.
+
+    Первыми — поля самой позиции: их разбирали под неё. Затем текст заявки,
+    если он про один объект: он сегодняшний. Последней — карточка объекта из
+    базы знаний контрагента (лист «Объекты Мелиор», описание проекта Градуса):
+    это постоянные условия объекта, и у МЕЛИОРа «есть возможность получать на
+    карту третьего лица» написано только там — в постах этого почти нет.
+    """
+    fields = "\n".join(
+        part for part in (_s(_col(row, name)) for name in _HIRE_FIELDS) if part
+    )
+    out = [fields]
+    if _whole_request(row):
+        out.append(_s(_col(row, "raw_text")))
+    out.append(_s(_col(row, "kb_text")))
+    return [text for text in out if text]
+
+
+def payment_block(row) -> Dict[str, Any]:
+    """Способы выплаты: на карту третьего лица и наличными.
+
+    Каждый вид решает первый источник, где о нём сказано (см. pay_sources), а
+    внутри одного источника «нет» сильнее «да»: у КНК в одной заявке стоит и
+    «Получение ЗП на 3-е лицо: Оформление по ТК РФ», и «НЕТ ВЫПЛАТ НА 3-Е
+    ЛИЦО».
+    """
+    found: Dict[str, tuple] = {}
+    for text in pay_sources(row):
+        here: Dict[str, tuple] = {}
+        for kind, state, note in _pay_hits(text):
+            if kind in found:
+                continue
+            if kind not in here or (state == "no" and here[kind][0] == "yes"):
+                here[kind] = (state, note)
+        found.update(here)
+    third = found.get("third", ("", ""))
+    cash = found.get("cash", ("", ""))
+    notes = []
+    for note in (third[1], cash[1]):
+        if note and note not in notes:
+            notes.append(note)
+    return {
+        "st": "yes" if third[0] or cash[0] else "na",
+        # Периодичность выплат и аванс парсер не извлекает.
+        "third": third[0],
+        "cash": cash[0],
+        "note": " · ".join(notes),
+    }
+
+
 # ------------------------------------------------------------------ блоки быта
 
 def housing_block(row) -> Dict[str, Any]:
@@ -443,30 +653,76 @@ def deductions(row) -> Dict[str, Any]:
 
 # --------------------------------------------------------------------- позиции
 
-def media_block(row) -> List[Dict[str, Any]]:
-    """Материалы позиции. Сейчас это папка с фотографиями объекта.
+def kb_object_key(row) -> str:
+    """Имя объекта из базы знаний контрагента — ключ для ставок рекрутёра.
 
-    Ссылка берётся из таблицы `position_kb` — её заполняет обход Яндекс.Диска
-    (см. project_kb.link_positions). Не опознали проект или в папке нет ни
-    одной фотографии — материала нет, и кнопка в карточке не появляется.
+    Пока такое имя есть только у МЕЛИОРа: там карточка объекта — лист таблицы,
+    и её путь (`melior:Летуаль`) устойчив, в отличие от названия, которое
+    контрагент правит вместе с адресом. У Градуса ключ карточки — путь папки
+    на диске, он в сетке ставок не фигурирует, поэтому там всё по-прежнему.
     """
-    url = _s(_col(row, "photos_url"))
+    path = _s(_col(row, "kb_path"))
+    if not path.startswith("melior:"):
+        return ""
+    return path[len("melior:"):].strip()
+
+
+def media_block(row) -> List[Dict[str, Any]]:
+    """Материалы позиции: фотографии объекта и его описание.
+
+    Ссылки берутся из таблицы `position_kb` — её заполняет обход базы знаний
+    контрагента (см. project_kb.link_positions): у Градуса это папки
+    Яндекс.Диска, у МЕЛИОРа — листы таблицы «Объекты Мелиор». Не опознали
+    объект — материалов нет, и кнопок в карточке не появляется.
+    """
+    out: List[Dict[str, Any]] = []
+    source = _s(_col(row, "source"))
+    photos_url = _s(_col(row, "photos_url"))
     photos = _i(_col(row, "kb_photos")) or 0
-    if not url or not photos:
-        return []
-    return [{
-        "kind": "object_photo",
-        "url": url,
-        # Ссылка публичная: папка контрагента открыта по ссылке, её можно
-        # отправить кандидату (рекрутёр решает это галочкой в тексте).
-        "vis": "public",
-        # Живость ссылки отдельно не проверяем: она из индекса, который
-        # переобходит диск каждые несколько часов. Пропала папка — пропадёт и
-        # строка в position_kb, а не появится битая кнопка.
-        "alive": True,
-        "upd": _s(_col(row, "linked_at"))[:10],
-        "src": _s(_col(row, "kb_project")),
-    }]
+    folder_url = _s(_col(row, "kb_folder_url"))
+    updated = _s(_col(row, "linked_at"))[:10]
+    project = _s(_col(row, "kb_project"))
+
+    if photos_url and photos:
+        out.append({
+            # У МЕЛИОРа контрагент выкладывает именно фотографии проживания —
+            # так подписан и сам пост со ссылкой.
+            "kind": "housing_photo" if source == "melior" else "object_photo",
+            "url": photos_url,
+            # Ссылка публичная: папка контрагента открыта по ссылке, её можно
+            # отправить кандидату (рекрутёр решает это галочкой в тексте).
+            "vis": "public",
+            # Живость ссылки отдельно не проверяем: она из индекса, который
+            # переобходит диск каждые несколько часов. Пропала папка — пропадёт и
+            # строка в position_kb, а не появится битая кнопка.
+            "alive": True,
+            "upd": updated,
+            "src": project,
+        })
+
+    # Описание объекта — внутренний документ контрагента: там ставки по всем
+    # операциям и условия выплат. Кандидату его не отправляют, поэтому vis
+    # не public: кнопка в карточке есть, в текст кандидату материал не уедет.
+    #
+    # Пока только МЕЛИОР: у него карточка объекта — отдельный лист таблицы, и
+    # ссылка ведёт ровно на описание. У Градуса folder_url — это папка
+    # проекта, где лежат те же фотографии, и вторая кнопка вела бы туда же.
+    #
+    # Сверяемся с уже показанным, а не с photos_url: когда фотоальбома у
+    # объекта нет, photos_url тоже указывает на лист (так устроен
+    # project_kb.photos_url), кнопки с фотографиями при этом не появляется — и
+    # сравнение с ним прятало бы описание у всех объектов без фото.
+    shown = {item["url"] for item in out}
+    if source == "melior" and folder_url and folder_url not in shown:
+        out.append({
+            "kind": "object_card",
+            "url": folder_url,
+            "vis": "internal",
+            "alive": True,
+            "upd": updated,
+            "src": project,
+        })
+    return out
 
 
 def _same_place(region: str, city: str) -> bool:
@@ -509,9 +765,18 @@ def position_row(
     meals = meals_block(row)
     travel = travel_block(row)
     ded = deductions(row)
+    pay = payment_block(row)
 
     # Объект в понимании ставок: то, что контрагент перечисляет в своей сетке.
-    client = rates.client_key(_s(row["counterparty"]), _s(row["object_name"]))
+    # Если объект опознан в базе знаний контрагента — берём имя оттуда: в
+    # сетке ставок стоит «Летуаль», а парсер в разных постах пишет то
+    # «ЛЕТУАЛЬ (склад косметики и парфюмерии)», то «Летуаль», и правило,
+    # заведённое на один вариант, для другого не сработало бы (rates сравнивает
+    # строки точно). На 55 позициях МЕЛИОРа таких написаний было 34 на 24
+    # объекта.
+    client = kb_object_key(row) or rates.client_key(
+        _s(row["counterparty"]), _s(row["object_name"]),
+    )
     rec = rates.resolve(
         rules or [], _s(row["source"]), client,
         _s(row["vacancy_name"]), _i(row["min_shifts"]),
@@ -567,6 +832,12 @@ def position_row(
         "advantages": _s(row["advantages"]),
         "risks": _s(row["risks"]),
 
+        # Оформление и выплаты — не поля реестра, а то, что удалось вычитать
+        # из заявки. Пусто значит «в заявке не сказано», а не «нельзя».
+        "hire": hire_forms(row),
+        "pay3": pay["third"] == "yes",
+        "payCash": pay["cash"] == "yes",
+
         "med": med_state(row),
         "medPayer": _s(row["medical_book_payer"]),
         "sb": sb_state(row["sb_policy"]),
@@ -578,8 +849,7 @@ def position_row(
         "house": house,
         "meals": meals,
         "travel": travel,
-        # Периодичность выплат и аванс парсер не извлекает.
-        "pay": {"st": "na"},
+        "pay": pay,
         "ded": ded["ded"],
         "dedSt": ded["dedSt"],
         # Видео и маршрутов реестр не хранит; фотографии объекта приходят из
@@ -665,18 +935,29 @@ def find_dupes(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
 # ------------------------------------------------------------------- источники
 
 def sources_block(conn, now: datetime) -> List[Dict[str, Any]]:
+    # Сбой считаем только по заявкам, которые ещё приходят из источника.
+    # Строка может упасть один раз и назавтра исчезнуть у контрагента —
+    # повторять её станет нечем, а «источник недоступен» висело бы вечно: так
+    # ЯППИ шесть недель числился сломанным из-за одной заявки от 17.08.2026,
+    # у которой разбор упал по 404 от LLM. Живой сбой сам себя покажет —
+    # такая заявка приезжает каждый прогон и падает заново, поэтому её
+    # last_seen_at всегда свежий.
+    cutoff = (now - timedelta(days=FAILED_WINDOW_DAYS)).isoformat(timespec="seconds")
     rows = conn.execute(
         """
         SELECT r.source,
                MAX(r.source_name) AS source_name,
                MAX(r.source_url) AS source_url,
                MAX(r.last_seen_at) AS last_seen,
-               SUM(CASE WHEN r.parse_status != 'ok' THEN 1 ELSE 0 END) AS failed,
+               SUM(CASE WHEN r.parse_status != 'ok'
+                         AND COALESCE(r.last_seen_at, '') >= ?
+                        THEN 1 ELSE 0 END) AS failed,
                COUNT(*) AS requests
         FROM requests r
         GROUP BY r.source
         ORDER BY r.source
-        """
+        """,
+        (cutoff,),
     ).fetchall()
     positions = {
         row["source"]: row["cnt"]
@@ -961,22 +1242,49 @@ def apply_role_visibility(payload: Dict[str, Any], *, is_admin: bool) -> Dict[st
 
 # ------------------------------------------------------------------ сборка всего
 
-def build_payload(conn, active_only: bool = True) -> Dict[str, Any]:
-    now = datetime.now()
+def load_rows(conn, active_only: bool = True) -> List[Any]:
+    """Строки реестра со всем, что нужно position_row() и pay_sources().
+
+    Отдельно от build_payload: тем же набором пользуется помощник подбора
+    (nav_assistant.py), и его выдача обязана совпадать с тем, что рекрутёр
+    видит в «Навигаторе».
+    """
     scope = "WHERE p.is_active = 1" if active_only else ""
-    db_rows = conn.execute(
+    return conn.execute(
         f"""
         SELECT p.*, r.raw_text, r.source_name, r.source_url, r.parse_status,
                r.received_at, r.first_seen_at AS request_first_seen_at,
                k.photos_url, k.photos AS kb_photos, k.project AS kb_project,
-               k.linked_at
+               k.folder_url AS kb_folder_url, k.path AS kb_path, k.linked_at,
+               d.doc_text AS kb_text,
+               g.req_positions, g.req_objects, g.req_blank_objects
         FROM positions p
         JOIN requests r ON r.request_id = p.last_request_id
         LEFT JOIN position_kb k ON k.position_id = p.position_id
+        LEFT JOIN disk_projects d ON d.path = k.path
+        -- Сколько объектов в заявке: в посте-списке текст заявки общий на
+        -- все объекты, и условия одного нельзя раздавать остальным
+        -- (см. _whole_request). Считаем по request_positions — что заявка
+        -- породила, — а не по last_request_id: на нём висят и погашенные
+        -- старые версии той же позиции.
+        LEFT JOIN (
+            SELECT rp.request_id,
+                   COUNT(*) AS req_positions,
+                   COUNT(DISTINCT TRIM(COALESCE(s.object_name, ''))) AS req_objects,
+                   SUM(TRIM(COALESCE(s.object_name, '')) = '') AS req_blank_objects
+            FROM request_positions rp
+            JOIN positions s ON s.position_id = rp.position_id
+            GROUP BY rp.request_id
+        ) g ON g.request_id = p.last_request_id
         {scope}
         ORDER BY p.last_seen_at DESC, p.position_id
         """
     ).fetchall()
+
+
+def build_payload(conn, active_only: bool = True) -> Dict[str, Any]:
+    now = datetime.now()
+    db_rows = load_rows(conn, active_only)
 
     rows: List[Dict[str, Any]] = []
     raw: Dict[str, str] = {}

@@ -10,6 +10,9 @@
 Один вызов setup_logging() настраивает:
 - Консольный handler (stderr) с INFO+, цветной формат.
 - Файл logs/eltera.log с DEBUG+, ротация раз в месяц, UTF-8.
+- Файл logs/parse_dlq.log — мёртвая очередь разбора (см. parse_dlq), JSON
+  Lines, та же помесячная ротация. Туда уходят вакансии, потерянные при
+  разборе; в общий лог по ним падает только короткая строка «[DLQ:...]».
 
 Ротация: раз в месяц, старый файл сжимается в .zip, храним 12 месяцев.
 Ротация у loguru отсчитывается от времени создания файла (месяц ≈ 30.4 суток),
@@ -23,8 +26,15 @@ from pathlib import Path
 
 from loguru import logger
 
+import parse_dlq
+
 _configured = False
 LOG_DIR = Path(__file__).parent / "logs"
+
+# Записи мёртвой очереди — это JSON на всю ширину экрана. В консоли и общем
+# логе они мешают, поэтому туда идёт только короткая строка «[DLQ:...]»,
+# а сам JSON — в отдельный файл (см. parse_dlq).
+_not_dlq = lambda record: not record["extra"].get(parse_dlq.DLQ_MARK)  # noqa: E731
 
 
 def setup_logging(log_dir: Path = LOG_DIR) -> None:
@@ -48,6 +58,7 @@ def setup_logging(log_dir: Path = LOG_DIR) -> None:
             "<level>{message}</level>"
         ),
         colorize=True,
+        filter=_not_dlq,
     )
 
     # Файл: подробный, с line:func, DEBUG+, помесячная ротация.
@@ -66,6 +77,10 @@ def setup_logging(log_dir: Path = LOG_DIR) -> None:
             "{name}:{function}:{line} - {message}"
         ),
         enqueue=True,  # потокобезопасная очередь — важно для async + threads
+        filter=_not_dlq,
     )
+
+    # Мёртвая очередь разбора: logs/parse_dlq.log, та же помесячная ротация.
+    parse_dlq.setup(log_dir)
 
     _configured = True

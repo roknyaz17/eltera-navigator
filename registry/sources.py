@@ -13,7 +13,10 @@ SOURCE_AAAPLUS = "aaaplus"
 SOURCE_AMETIST = "ametist"
 SOURCE_MARKETSTAFF = "marketstaff"
 SOURCE_TABIYA = "tabiya"
+SOURCE_MELIOR = "melior"
 SOURCE_MANUAL = "manual"
+# Наши собственные проекты, без контрагента: scripts/internal_projects.py.
+SOURCE_INTERNAL = "internal"
 
 
 def unique_ref(base: str, seen: Set[str]) -> str:

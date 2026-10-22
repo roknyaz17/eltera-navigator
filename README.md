@@ -201,8 +201,8 @@ python scripts/recruiter_rates.py
 
 | Задача | Время | Источники | reset |
 |---|---|---|---|
-| `morning_telegram` | 09:30 | Градус, AAA+ | да |
-| `noon_tables` | 12:00 | КНК, ЯППИ, Маркетстафф, Табия | да |
+| `morning_telegram` | 09:30 | Градус, AAA+, МЕЛИОР | да |
+| `noon_tables` | 12:00 | КНК, ЯППИ, Маркетстафф | да |
 | `afternoon_vahtapro` | 13:00 | Градус | нет |
 | `afternoon_ametist` | 13:30 | Аметист | нет |
 

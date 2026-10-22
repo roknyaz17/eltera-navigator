@@ -98,7 +98,9 @@ SOURCE_TITLES = {
     "ametist": "Аметист",
     "marketstaff": "Маркетстафф",
     "tabiya": "Табия",
+    "melior": "МЕЛИОР",
     "manual": "Вручную",
+    "internal": "Внутренние проекты",
 }
 
 

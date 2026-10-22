@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from loguru import logger
 
+import parse_dlq
 from registry import db
 from registry.ids import next_position_id, next_request_id
 from registry.models import DATA_FIELDS, IngestStats, RawRequest
@@ -293,20 +294,43 @@ class RegistryIngestor:
             except Exception as exc:  # noqa: BLE001 — падение одной заявки не должно ронять прогон
                 logger.exception(f"[{item.request_id}] разбор упал: {exc}")
                 item.error = str(exc)
+                parse_dlq.record(
+                    "request_failed", item.raw.source, item.request_id,
+                    raw=item.raw, exc=exc, chunks_total=len(chunks),
+                )
                 return
 
             collected: List[Dict[str, Any]] = []
             failed = 0
-            for parsed, t_in, t_out in results:
+            lost_chunks: List[Tuple[int, str]] = []
+            for index, (parsed, t_in, t_out) in enumerate(results):
                 item.tokens_in += t_in
                 item.tokens_out += t_out
                 if parsed is None:
                     failed += 1
+                    lost_chunks.append((index, chunks[index] if index < len(chunks) else ""))
                     continue
                 collected.extend(parsed)
 
             if failed == len(results):
                 item.error = "LLM не вернул валидный JSON"
+                parse_dlq.record(
+                    "request_failed", item.raw.source, item.request_id,
+                    raw=item.raw, error=item.error, chunks_total=len(results),
+                    chunks_failed=failed,
+                )
+                return
+            if not collected and item.raw.expects_vacancies:
+                # Строка таблицы с ненулевой потребностью, а модель ответила
+                # «вакансий нет». Принять это за ответ — значит отвязать позиции
+                # заявки, а при том же тексте повторного разбора уже не будет:
+                # так 12.10.2026 пропала «Фамилия» Аметиста. Как сбой — позиции
+                # остаются, следующий прогон разберёт заявку заново.
+                item.error = "LLM вернул пустой список по строке с потребностью"
+                parse_dlq.record(
+                    "request_empty", item.raw.source, item.request_id,
+                    raw=item.raw, error=item.error, chunks_total=len(results),
+                )
                 return
             if failed:
                 # Часть кусков разобралась — заявку сохраняем, но помечаем, что
@@ -315,6 +339,15 @@ class RegistryIngestor:
                 logger.warning(
                     f"[{item.request_id}] не разобрано {failed} из {len(results)} фрагментов"
                 )
+                # Заявка уйдёт в базу как удачная, поэтому потерянные куски
+                # нигде, кроме мёртвой очереди, следа не оставят.
+                for index, chunk in lost_chunks:
+                    parse_dlq.record(
+                        "chunks_failed", item.raw.source, item.request_id,
+                        raw=item.raw, error="LLM не вернул валидный JSON по фрагменту",
+                        chunk_index=index, chunks_total=len(results),
+                        chunks_failed=failed, chunk=chunk,
+                    )
             item.parsed = collected
 
         await asyncio.gather(*[parse_one(item) for item in targets])
@@ -358,6 +391,14 @@ class RegistryIngestor:
                     merged.update(item.raw.field_overrides or {})
                     fields = normalizer.normalize(merged)
                     if not self._is_meaningful(fields):
+                        # Единственное место, где вакансия пропадала совсем
+                        # бесследно: ни счётчика, ни строки в логе.
+                        parse_dlq.record(
+                            "vacancy_empty", source, item.request_id,
+                            raw=item.raw,
+                            error="после нормализации нет ни должности, ни объекта, ни города",
+                            vacancy_raw=merged, fields=fields,
+                        )
                         continue
                     position_id, created = self._upsert_position(
                         conn, item.request_id, source, fields, now, claimed=keep

@@ -40,9 +40,19 @@ def _routes():
                 break
             k += 1
         body = "\n".join(sig)
-        out.append((m.group(1).upper(), m.group(2),
-                    "verify_creds" in body or "require_admin" in body))
+        out.append((m.group(1).upper(), m.group(2), _has_auth(body)))
     return out
+
+
+# Зависимости, наличие которых в сигнатуре означает «роут закрыт».
+# verify_agent_token — машинный клиент по заголовку X-Agent-Token: им ходит
+# голосовой агент за подбором вакансий во время звонка. Сессия ему не подходит
+# (её пришлось бы продлевать логином), Basic ограничен BASIC_PATHS.
+AUTH_DEPENDENCIES = ("verify_creds", "require_admin", "verify_agent_token")
+
+
+def _has_auth(body: str) -> bool:
+    return any(name in body for name in AUTH_DEPENDENCIES)
 
 
 # Роуты, которым положено быть открытыми, и почему:
@@ -62,6 +72,23 @@ def test_open_routes_are_exactly_expected():
     assert open_routes == PUBLIC, (
         "Изменился список роутов без авторизации. Разрешены только "
         f"{sorted(PUBLIC)}. Сейчас открыты: {sorted(open_routes)}"
+    )
+
+
+def test_ручка_агента_закрыта_токеном():
+    """Роут отдаёт вакансии наружу, в интернет, без входа по логину.
+
+    Защищает его только заголовок X-Agent-Token, поэтому проверяем и наличие
+    зависимости, и то, что она не подменена на verify_creds: сессии у агента
+    нет, и молчаливый переход на неё сделал бы ручку неработающей, а не
+    закрытой.
+    """
+    source = open(APP_SOURCE, encoding="utf-8").read()
+    assert "verify_agent_token" in source
+    by_path = {path: auth for _, path, auth in _routes()}
+    assert by_path["/api/agent/vacancies"], "ручка агента осталась без авторизации"
+    assert "secrets.compare_digest" in source, (
+        "сверка токена должна быть постоянного времени"
     )
 
 
@@ -321,6 +348,8 @@ ADMIN_ONLY = {
     ("POST", "/api/users/{user_id}/reset"),
     ("POST", "/api/users/{user_id}/toggle"),
     ("POST", "/api/users/{user_id}/role"),
+    # Журнал помощника подбора — вопросы всех рекрутёров, а не свои.
+    ("GET", "/api/assistant/log"),
 }
 
 # Доступно любому вошедшему, включая рекрутера.
@@ -330,6 +359,7 @@ ANY_LOGGED_IN = {
     ("GET", "/registry/position/{position_id}"), ("POST", "/registry/position/{position_id}"),
     ("GET", "/registry/{request_id}"), ("GET", "/vacancies"), ("GET", "/api/vacancies"),
     ("GET", "/password"), ("POST", "/password"),
+    ("POST", "/api/assistant"),
 }
 
 

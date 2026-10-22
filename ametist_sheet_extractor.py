@@ -103,6 +103,7 @@ class AmetistSheetExtractor:
                 # Объект из колонки — только если модель ничего не нашла:
                 # в тексте позиции он обычно есть и сформулирован точнее.
                 field_defaults={"object_name": object_name},
+                expects_vacancies=True,
             ))
 
         logger.info(f"[Аметист] из таблицы взято {len(out)} активных позиций")

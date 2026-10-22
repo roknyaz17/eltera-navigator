@@ -57,6 +57,7 @@ class YappiToVacanciesService:
                 counterparty_hint=counterparty_name,
                 raw_payload=dict(row),
                 field_defaults={"counterparty": counterparty_name},
+                expects_vacancies=True,
             ))
 
         logger.info(f"[Yappi] из таблицы взято {len(out)} активных позиций")

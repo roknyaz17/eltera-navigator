@@ -150,6 +150,7 @@ class MarketstaffSheetExtractor:
                     "work_format": "вахта",
                     "shift_type": self._shift_type_from_schedule(row.get("schedule") or ""),
                 },
+                expects_vacancies=True,
             ))
 
         logger.info(

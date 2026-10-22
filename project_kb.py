@@ -78,6 +78,10 @@ TOKEN_ALIASES: Dict[str, Tuple[str, ...]] = {
     # Латиница в названии папки против кириллицы в посте: транслитерация тут
     # не помогает («бмж» → «bmzh»), поэтому пара задана явно.
     "бмж": ("bmj",),
+    # Сокращают не только города: лист объекта у МЕЛИОРа называется
+    # «Производство ЖБИ», а пост — «ПРОИЗВОДСТВО ЖЕЛЕЗОБЕТОННЫХ ИЗДЕЛИЙ».
+    # Общий токен у них один — «производство», и он ничего не различает.
+    "жби": ("железобетонных", "изделий"),
 }
 
 # Слова, которые описывают тип предприятия, а не проект. Брендом работать не
@@ -101,7 +105,12 @@ def normalize_tokens(text: str) -> List[str]:
     """
     if not text:
         return []
-    low = text.lower().replace("ё", "е")
+    # «э» к «е» — по той же причине, что и «ё»: в таблице объект называется
+    # «Сантенс», в посте пишут «САНТЭНС», и без этой замены пост уходит к
+    # соседней карточке «Склад медикаментов» — у Сантэнса в скобках ровно эти
+    # слова. Замена симметрична (применяется и к карточке, и к запросу),
+    # поэтому новых расхождений не создаёт.
+    low = text.lower().replace("ё", "е").replace("э", "е")
     tokens: List[str] = []
     for chunk in _WORD_RE.split(low):
         if not chunk or chunk in STOP_TOKENS:
@@ -700,28 +709,38 @@ class DiskIndexer:
             return 0
 
     def _save(self, conn, card: ProjectCard, now: str) -> None:
-        conn.execute(
-            """
-            INSERT INTO disk_projects (
-                path, source, category, name, title, tokens, url,
-                doc_text, docs, albums, photos, modified, fingerprint, indexed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(path) DO UPDATE SET
-                category = excluded.category, name = excluded.name, title = excluded.title,
-                tokens = excluded.tokens, url = excluded.url, doc_text = excluded.doc_text,
-                docs = excluded.docs, albums = excluded.albums, photos = excluded.photos,
-                modified = excluded.modified, fingerprint = excluded.fingerprint,
-                indexed_at = excluded.indexed_at
-            """,
-            (
-                card.path, self.source, card.category, card.name, card.title,
-                " ".join(card.tokens), card.url, card.doc_text,
-                json.dumps(card.docs, ensure_ascii=False),
-                json.dumps(card.albums, ensure_ascii=False),
-                card.photos, card.modified,
-                card.fingerprint, now,
-            ),
-        )
+        save_card(conn, card, self.source, now)
+
+
+def save_card(conn, card: ProjectCard, source: str, now: str) -> None:
+    """Карточка проекта в базу. Общая для всех источников базы знаний.
+
+    Карточка приезжает то с диска (Градус), то из таблицы объектов (МЕЛИОР) —
+    хранилище у них одно, и SQL должен быть один: две копии этого UPSERT
+    разъехались бы на первом же новом поле.
+    """
+    conn.execute(
+        """
+        INSERT INTO disk_projects (
+            path, source, category, name, title, tokens, url,
+            doc_text, docs, albums, photos, modified, fingerprint, indexed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(path) DO UPDATE SET
+            category = excluded.category, name = excluded.name, title = excluded.title,
+            tokens = excluded.tokens, url = excluded.url, doc_text = excluded.doc_text,
+            docs = excluded.docs, albums = excluded.albums, photos = excluded.photos,
+            modified = excluded.modified, fingerprint = excluded.fingerprint,
+            indexed_at = excluded.indexed_at
+        """,
+        (
+            card.path, source, card.category, card.name, card.title,
+            " ".join(card.tokens), card.url, card.doc_text,
+            json.dumps(card.docs, ensure_ascii=False),
+            json.dumps(card.albums, ensure_ascii=False),
+            card.photos, card.modified,
+            card.fingerprint, now,
+        ),
+    )
 
 
 def _clean_title(name: str) -> str:

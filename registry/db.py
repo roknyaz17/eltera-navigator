@@ -431,6 +431,363 @@ CREATE INDEX idx_login_audit_email ON login_audit(email);
 ALTER TABLE position_history ADD COLUMN changed_by TEXT NOT NULL DEFAULT '';
 """)
 
+# --- v8: кандидаты, звонки, очередь сообщений --------------------------------
+#
+# Другая сторона реестра. requests и positions — это то, что нужно заказчику:
+# сколько людей и на какой объект. Здесь — сами люди, с которыми говорил
+# голосовой агент, и то, что он о них узнал.
+#
+# Слово «заявка» намеренно не используется: в этой базе оно уже занято заявками
+# заказчиков (таблица requests), и вторая сущность с тем же именем сделала бы
+# любой разговор о коде двусмысленным.
+#
+# Ключ карточки — номер телефона, а не суррогатный id. Номер приходит от
+# звонилки, которая набирала, и это единственное, что достоверно связывает
+# разговор с человеком: ElevenLabs в режиме релея видит только добавочный 710.
+# Побочный эффект — один человек с двух номеров даст две карточки. Для пилота
+# приемлемо, слияние будет отдельной задачей.
+MIGRATIONS.append("""
+CREATE TABLE candidates (
+    phone            TEXT PRIMARY KEY,           -- +7XXXXXXXXXX, нормализован звонилкой
+    name             TEXT NOT NULL DEFAULT '',
+    age              INTEGER,
+    citizenship      TEXT NOT NULL DEFAULT '',
+    region           TEXT NOT NULL DEFAULT '',
+    city             TEXT NOT NULL DEFAULT '',
+    profession       TEXT NOT NULL DEFAULT '',
+
+    -- Три состояния, а не два: NULL значит «не обсуждали». Отличать это от
+    -- твёрдого «нет» приходится постоянно — иначе рекрутёр решит, что человеку
+    -- уже задавали вопрос, и не задаст его сам.
+    has_medical_book INTEGER,
+    ready_for_shift  INTEGER,
+    ready_to_move    INTEGER,
+
+    status           TEXT NOT NULL DEFAULT '',   -- см. call_status у агента
+    interest         TEXT NOT NULL DEFAULT '',   -- high / medium / low / none
+    preferred_channel TEXT NOT NULL DEFAULT '',  -- telegram / whatsapp
+    last_position_id TEXT NOT NULL DEFAULT '',
+
+    -- Свободный текст от агента: приводить его к справочникам сейчас рано,
+    -- рекрутёр читает как есть.
+    desired_salary   TEXT NOT NULL DEFAULT '',
+    desired_schedule TEXT NOT NULL DEFAULT '',
+    start_date       TEXT NOT NULL DEFAULT '',
+    objections       TEXT NOT NULL DEFAULT '',
+    questions        TEXT NOT NULL DEFAULT '',
+    next_action      TEXT NOT NULL DEFAULT '',
+    summary          TEXT NOT NULL DEFAULT '',
+
+    calls_count      INTEGER NOT NULL DEFAULT 0,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+
+CREATE INDEX idx_candidates_status ON candidates(status);
+CREATE INDEX idx_candidates_updated ON candidates(updated_at);
+
+-- По строке на разговор. conversation_id уникален, и это не украшение:
+-- повторный пуш того же звонка (ретрай сети, перезапуск обзвона) не должен
+-- ни задваивать историю, ни слать карточку второй раз.
+CREATE TABLE candidate_calls (
+    call_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone            TEXT NOT NULL REFERENCES candidates(phone) ON DELETE CASCADE,
+    conversation_id  TEXT NOT NULL UNIQUE,
+    started_at       TEXT NOT NULL DEFAULT '',
+    duration_secs    INTEGER,
+    call_successful  TEXT NOT NULL DEFAULT '',
+    termination_reason TEXT NOT NULL DEFAULT '',
+    status           TEXT NOT NULL DEFAULT '',
+    transcript       TEXT NOT NULL DEFAULT '',
+    -- Разговор целиком. Состав полей сбора данных у агента меняется, и без
+    -- сырого ответа новое поле пришлось бы добывать повторным звонком.
+    payload          TEXT NOT NULL DEFAULT '',
+    created_at       TEXT NOT NULL
+);
+
+CREATE INDEX idx_candidate_calls_phone ON candidate_calls(phone);
+
+-- Очередь исходящих сообщений. Разбирает её отдельный сервис переписки:
+-- забирает pending через API, отчитывается sent или failed. Навигатор сам
+-- никуда не отправляет и о мессенджерах ничего не знает.
+CREATE TABLE candidate_messages (
+    message_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone       TEXT NOT NULL REFERENCES candidates(phone) ON DELETE CASCADE,
+    channel     TEXT NOT NULL,                   -- telegram / whatsapp
+    kind        TEXT NOT NULL DEFAULT 'vacancy_card',
+    position_id TEXT NOT NULL DEFAULT '',
+    -- Готовая карточка в JSON, собранная из реестра на момент постановки.
+    -- Собираем сразу, а не при отправке: условия вакансии успеют измениться,
+    -- а человеку обещали то, что назвали вслух.
+    body        TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'pending', -- pending / sending / sent / failed
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    last_error  TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    sent_at     TEXT
+);
+
+CREATE INDEX idx_candidate_messages_status ON candidate_messages(status, created_at);
+""")
+
+# --- v9: то, что агент спрашивает, но складывать было некуда ----------------
+#
+# Пять полей, которые голосовой агент выясняет в разговоре, а карточка кандидата
+# теряла. Судимость и статья — самое дорогое из потерянного: без них нечего
+# отправлять в чат службы безопасности, а спрашивал их агент с первого дня.
+#
+# has_criminal_record объявлен как три состояния, а не два. «Не спрашивали» и
+# «сказал, что нет» — разные вещи: во втором случае повторный вопрос человеку
+# выглядит как недоверие, в первом его задать обязаны.
+#
+# criminal_article хранит номер статьи со слов кандидата. Это сведения особой
+# категории: срок хранения и доступ к ним надо ограничить отдельно, колонка
+# сама по себе такого ограничения не даёт.
+MIGRATIONS.append("""
+ALTER TABLE candidates ADD COLUMN has_criminal_record INTEGER;
+ALTER TABLE candidates ADD COLUMN criminal_article TEXT NOT NULL DEFAULT '';
+
+-- Перезвон и передача человеку: агент это собирает, а раньше складывать было
+-- некуда, и оба признака молча пропадали вместе с ответом.
+ALTER TABLE candidates ADD COLUMN callback_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE candidates ADD COLUMN callback_requested INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE candidates ADD COLUMN needs_human INTEGER NOT NULL DEFAULT 0;
+
+-- Кого звать первым: и просьба перезвонить, и запрос живого рекрутёра требуют
+-- действия человека в конкретный срок.
+CREATE INDEX idx_candidates_callback ON candidates(callback_requested, callback_at);
+CREATE INDEX idx_candidates_needs_human ON candidates(needs_human);
+""")
+
+# --- v10: входящие от кандидата ---------------------------------------------
+#
+# До сих пор переписка была односторонней: очередь candidate_messages умеет
+# только исходящие, поля направления в ней нет. Кандидат при этом отвечает —
+# и присылает документы фотографиями в тот же чат.
+#
+# Входящие держим отдельной таблицей, а не флагом направления в исходящей.
+# У них разный жизненный цикл: у исходящего есть попытки доставки и статус
+# отправки, у входящего — разбор и решение. Общая таблица заставила бы половину
+# колонок стоять пустыми у каждой строки.
+#
+# Содержимое вложений здесь НЕ хранится. Только факт: тип, размер, отпечаток и
+# путь к файлу, если он вообще сохранён. Паспорт в SQLite не кладут: база едет
+# в бэкапы целиком, а удалить оттуда одну картинку по требованию человека
+# нельзя. Само хранилище появится отдельно и с ограниченным сроком жизни.
+MIGRATIONS.append("""
+CREATE TABLE candidate_inbound (
+    inbound_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone       TEXT NOT NULL,
+    channel     TEXT NOT NULL,                   -- telegram / whatsapp / max
+    -- Идентификатор собеседника внутри канала. Телефон известен не всегда:
+    -- в Telegram ответ приходит от пользователя, а не от номера, и связать
+    -- одно с другим можно только по записи, сделанной при отправке.
+    peer        TEXT NOT NULL DEFAULT '',
+    external_id TEXT NOT NULL DEFAULT '',        -- id сообщения в мессенджере
+    kind        TEXT NOT NULL DEFAULT 'text',    -- text / photo / document / other
+    text        TEXT NOT NULL DEFAULT '',
+    -- Про вложение: что это, сколько весит, куда легло. Содержимое не здесь.
+    media_type  TEXT NOT NULL DEFAULT '',
+    media_size  INTEGER,
+    media_sha256 TEXT NOT NULL DEFAULT '',
+    media_path  TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'new',     -- new / handled / ignored
+    received_at TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
+-- Разбирать входящие надо в порядке поступления и по одному каналу за раз.
+CREATE INDEX idx_inbound_status ON candidate_inbound(status, received_at);
+CREATE INDEX idx_inbound_phone ON candidate_inbound(phone, received_at);
+-- Мессенджеры переприсылают события при переподключении: одно и то же
+-- сообщение не должно попасть в разбор дважды.
+CREATE UNIQUE INDEX idx_inbound_external ON candidate_inbound(channel, external_id)
+    WHERE external_id != '';
+
+-- Кто есть кто в мессенджере. Telegram-драйвер удаляет контакт сразу после
+-- отправки (мера против блокировки), и ответ прилетает от идентификатора, по
+-- которому телефон уже не восстановить. Значит соответствие надо записать в
+-- момент отправки, пока контакт ещё существует.
+CREATE TABLE channel_peers (
+    channel    TEXT NOT NULL,
+    peer       TEXT NOT NULL,
+    phone      TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (channel, peer)
+);
+
+CREATE INDEX idx_channel_peers_phone ON channel_peers(phone);
+""")
+
+# --- v11: заявки в службу безопасности --------------------------------------
+#
+# Куда отправлять пакет документов, зависит от вакансии. В реестре у позиции
+# есть и контрагент (Марс, Балтика, Аметист — сто четыре штуки), и источник
+# (vahtapro, yappi, ametist — семь). Чатов у компании около десяти, то есть
+# они заведены не на каждого контрагента.
+#
+# Поэтому адресация не привязана жёстко ни к тому, ни к другому: правило
+# указывает, по какому полю оно срабатывает. Ищем сначала точное совпадение по
+# контрагенту, потом по источнику, потом общий чат. Так один и тот же механизм
+# обслуживает и «для Марса отдельный чат», и «всё от ВахтаПро в один».
+MIGRATIONS.append("""
+CREATE TABLE sb_chats (
+    chat_row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- counterparty | source | default
+    match_type  TEXT NOT NULL,
+    match_value TEXT NOT NULL DEFAULT '',
+    channel     TEXT NOT NULL DEFAULT 'telegram',
+    chat_id     TEXT NOT NULL,
+    title       TEXT NOT NULL DEFAULT '',
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX idx_sb_chats_match ON sb_chats(match_type, match_value);
+
+-- Заявка в СБ: пакет ушёл в чат и ждёт ответа живого человека.
+--
+-- Ответ приходит текстом от людей, которые не знают ни про какие идентификаторы,
+-- поэтому связать его с заявкой можно только по чату и времени. Держим здесь
+-- всё, что для этого нужно, плюс сырой текст ответа: разбор «одобрено или нет»
+-- ошибается, и без исходника разбираться будет не с чем.
+CREATE TABLE sb_requests (
+    request_row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone       TEXT NOT NULL REFERENCES candidates(phone) ON DELETE CASCADE,
+    position_id TEXT NOT NULL DEFAULT '',
+    counterparty TEXT NOT NULL DEFAULT '',
+    source      TEXT NOT NULL DEFAULT '',
+    channel     TEXT NOT NULL DEFAULT 'telegram',
+    chat_id     TEXT NOT NULL DEFAULT '',
+    -- Текст пакета сохраняем как отправленный. Условия в реестре меняются, а
+    -- спорить с заказчиком придётся по тому, что он реально видел.
+    body        TEXT NOT NULL DEFAULT '',
+    -- draft: собрана, ждёт документов. queued: готова к отправке.
+    -- sent: ушла, ждём ответа. approved / rejected / unclear: ответ получен.
+    status      TEXT NOT NULL DEFAULT 'draft',
+    external_id TEXT NOT NULL DEFAULT '',   -- id отправленного сообщения в чате
+    answer_text TEXT NOT NULL DEFAULT '',
+    answered_by TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    sent_at     TEXT,
+    answered_at TEXT
+);
+
+CREATE INDEX idx_sb_requests_status ON sb_requests(status, created_at);
+CREATE INDEX idx_sb_requests_phone ON sb_requests(phone);
+CREATE INDEX idx_sb_requests_chat ON sb_requests(chat_id, status);
+
+-- Очередь исходящих научилась адресовать не только кандидату. Раньше адресом
+-- был телефон и только он; заявка в СБ уходит в групповой чат, где телефона
+-- нет вовсе. Старые строки остаются валидными: пустой chat_id значит «слать
+-- на phone», как и раньше.
+ALTER TABLE candidate_messages ADD COLUMN chat_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE candidate_messages ADD COLUMN external_id TEXT NOT NULL DEFAULT '';
+""")
+
+# --- v12: дата выезда --------------------------------------------------------
+#
+# Спрашиваем её сразу после того, как собран комплект документов, а не после
+# одобрения. Причина простая: проверка службой безопасности идёт своим ходом
+# и занимает от часа до суток, а знать срок надо раньше — иначе одобренный
+# кандидат сутки лежит без плана, и заказчик узнаёт дату последним.
+#
+# Храним и слова кандидата, и разобранную дату. Разбор ошибается, а человек
+# писал что-то осмысленное: рекрутёру важнее увидеть «после майских», чем
+# нашу догадку про 12 мая. Точность отделена от самой даты, потому что
+# «через недельку» и «15 марта» одинаково полезны, но по-разному надёжны.
+MIGRATIONS.append("""
+ALTER TABLE candidates ADD COLUMN departure_raw TEXT NOT NULL DEFAULT '';
+ALTER TABLE candidates ADD COLUMN departure_date TEXT NOT NULL DEFAULT '';
+-- exact / approx / unknown
+ALTER TABLE candidates ADD COLUMN departure_precision TEXT NOT NULL DEFAULT '';
+ALTER TABLE candidates ADD COLUMN departure_asked_at TEXT NOT NULL DEFAULT '';
+
+-- Сколько раз уже переспрашивали про срок. Один раз уточнить нормально, три
+-- раза — это давление, после которого человек перестаёт отвечать вовсе.
+ALTER TABLE candidates ADD COLUMN departure_asks INTEGER NOT NULL DEFAULT 0;
+
+CREATE INDEX idx_candidates_departure ON candidates(departure_date);
+""")
+
+
+# v13. Состояние переписки и разобранные документы.
+#
+# До этой миграции бот умел только слать и принимать: что человек прислал
+# паспорт, было видно в candidate_inbound, а что паспорт признан годным —
+# нигде. Вердикт жил в памяти воркера и умирал вместе с ним, поэтому после
+# перезапуска бот просил документ заново у того, кто его уже прислал.
+#
+# Стадия нужна по той же причине. Без неё нельзя отличить «ждём документы» от
+# «ждём дату» и «заявка уже у заказчика», а значит нельзя ни ответить по делу,
+# ни напомнить вовремя, ни замолчать, когда диалог передан человеку.
+MIGRATIONS.append("""
+-- card_sent / docs / date / sb / approved / rejected / human / cold
+ALTER TABLE candidates ADD COLUMN stage TEXT NOT NULL DEFAULT '';
+ALTER TABLE candidates ADD COLUMN stage_since TEXT NOT NULL DEFAULT '';
+
+-- Напоминаний ровно два: через несколько часов и на следующее утро. Третье
+-- это уже давление, после которого человек перестаёт отвечать совсем.
+ALTER TABLE candidates ADD COLUMN reminders_sent INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE candidates ADD COLUMN last_reminder_at TEXT NOT NULL DEFAULT '';
+
+CREATE INDEX idx_candidates_stage ON candidates(stage, stage_since);
+
+-- Разбор присланного файла. Персональные данные ровно те, что уедут в заявку
+-- службе безопасности: ФИО, дата рождения, пол, номер СНИЛС или ИНН. Адреса,
+-- кем выдан и кода подразделения здесь нет намеренно — проверяющему они не
+-- нужны, а каждое лишнее поле это ещё одни персональные данные у нас.
+--
+-- Сам файл лежит на диске, в базе только путь: паспорта тяжёлые, и хранить
+-- их в SQLite рядом с реестром заявок значит получить базу в гигабайт и
+-- неудаляемые сканы.
+CREATE TABLE candidate_documents (
+    document_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone       TEXT NOT NULL,
+    kind        TEXT NOT NULL,             -- passport_main / passport_registration / snils / inn
+    outcome     TEXT NOT NULL,             -- accepted / retry / manual
+    full_name   TEXT NOT NULL DEFAULT '',
+    birth_date  TEXT NOT NULL DEFAULT '',
+    sex         TEXT NOT NULL DEFAULT '',
+    number      TEXT NOT NULL DEFAULT '',
+    confidence  REAL NOT NULL DEFAULT 0,
+    problems    TEXT NOT NULL DEFAULT '',
+    media_path  TEXT NOT NULL DEFAULT '',
+    inbound_id  INTEGER,
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX idx_documents_phone ON candidate_documents(phone, kind);
+
+-- Отдельно по дате создания: по нему ходит уборка, которая через неделю
+-- стирает файлы с диска.
+CREATE INDEX idx_documents_created ON candidate_documents(created_at);
+""")
+
+
+# v14. Раздел переписки для менеджеров.
+#
+# sent_text — то, что человек реально увидел. В очереди лежат данные, а не
+# текст: формулировки живут в мессенджере и меняются без выкатки навигатора.
+# Для отправки это верно, а для истории губительно — стоит поправить
+# формулировку, и вся прошлая переписка задним числом станет другой. Поэтому
+# отправленный текст записывается отдельно и больше не меняется никогда.
+#
+# author — кто написал: пусто у бота, почта менеджера у человека. Нужно и в
+# интерфейсе, и для разбора потом: «кто это ему такое написал» должно иметь
+# ответ.
+MIGRATIONS.append("""
+ALTER TABLE candidate_messages ADD COLUMN sent_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE candidate_messages ADD COLUMN author TEXT NOT NULL DEFAULT '';
+
+-- Индекс по входящим завела ещё v10 — здесь он был бы вторым с тем же именем,
+-- и executescript валится на этой строке, успев применить ALTER TABLE выше.
+-- Версия схемы при этом не повышается, и база остаётся между двумя миграциями.
+CREATE INDEX IF NOT EXISTS idx_messages_phone ON candidate_messages(phone, created_at);
+""")
+
 
 @contextmanager
 def connect(db_path: str = None, readonly: bool = False) -> Iterator[sqlite3.Connection]:
@@ -490,6 +847,12 @@ def _ensure_schema(path: str) -> None:
         _initialized.add(path)
 
 
+# Сколько копий перед миграциями держим. Каждая — полный файл базы (285 МБ
+# на октябрь 2026), поэтому без ограничения каталог разрастается: к 14
+# октября 2026 там лежал гигабайт в двадцати файлах, от v6 (август) до v17.
+BACKUP_KEEP = int(os.getenv("BACKUP_KEEP", "3"))
+
+
 def backup_before_migration(conn: sqlite3.Connection, path: str, current: int, target: int) -> Optional[str]:
     """Снимает копию базы перед накатом миграций. Возвращает путь к копии.
 
@@ -520,9 +883,126 @@ def backup_before_migration(conn: sqlite3.Connection, path: str, current: int, t
         conn.backup(dest)
     finally:
         dest.close()
+    _prune_backups(backup_dir, os.path.basename(path), BACKUP_KEEP)
     return target_path
+
+
+def _prune_backups(backup_dir: str, db_name: str, keep: int) -> None:
+    """Оставляет `keep` свежих копий, остальные убирает.
+
+    Берём только то, что создаём сами: имя начинается с «registry.db.v» и
+    кончается на «.bak». В том же каталоге лежат копии, снятые руками
+    (registry.db.pre-tls.bak), и журналы незавершённых копий — их не трогаем.
+
+    Сбой чистки не должен мешать миграции: база уже скопирована, и рисковать
+    апгрейдом ради места незачем — поэтому только предупреждение в лог.
+    """
+    if keep < 1:
+        return
+    prefix = db_name + ".v"
+    try:
+        files = [
+            os.path.join(backup_dir, name)
+            for name in os.listdir(backup_dir)
+            if name.startswith(prefix) and name.endswith(".bak")
+        ]
+        files.sort(key=os.path.getmtime, reverse=True)
+        for stale in files[keep:]:
+            os.remove(stale)
+            # SQLite мог оставить рядом журнал незавершённой копии.
+            journal = stale + "-journal"
+            if os.path.exists(journal):
+                os.remove(journal)
+            logger.info(f"[registry] убрана старая копия: {os.path.basename(stale)}")
+    except OSError as exc:
+        logger.warning(f"[registry] старые копии в {backup_dir} не почищены: {exc}")
 
 
 def reset_schema_cache() -> None:
     """Сбрасывает память о проинициализированных базах — нужно тестам."""
     _initialized.clear()
+
+
+# v15. Дополнительные документы по контрагентам.
+#
+# Требования у всех разные, и узнаём мы о них отказом. Маркет Стафф без фото
+# по пояс на светлом фоне не отправляет на проверку вовсе — «На проверку сб не
+# могу отправить», Аметист просит то же «на пропуск». Спрашивать это надо
+# сразу, вместе с паспортом, а не после того, как заявка вернулась.
+#
+# Список через запятую, а не отдельной таблицей: значений два-три на строку,
+# меняются они раз в полгода, и связь один-к-многим тут дала бы вторую таблицу
+# ради экономии, которой не будет.
+MIGRATIONS.append("""
+ALTER TABLE sb_chats ADD COLUMN extra_docs TEXT NOT NULL DEFAULT '';
+""")
+
+
+# v16. Очередь лидов в Битрикс.
+#
+# Отдельная таблица, а не общая очередь сообщений: там доставкой занимается
+# сервис переписки, а Битрикс не мессенджер — у него нет ни канала, ни чата, и
+# отправляет туда сам навигатор своим планировщиком.
+#
+# UNIQUE по паре «телефон и позиция»: тот же человек по той же вакансии — тот
+# же лид, сколько бы раз он ни перезвонил. По другой вакансии лид новый, это
+# уже другая работа и другой менеджер.
+MIGRATIONS.append("""
+CREATE TABLE crm_leads (
+    crm_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone       TEXT NOT NULL,
+    position_id TEXT NOT NULL DEFAULT '',
+    payload     TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'pending',   -- pending / sent / failed
+    bitrix_id   INTEGER,
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    last_error  TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    UNIQUE (phone, position_id)
+);
+
+CREATE INDEX idx_crm_status ON crm_leads(status, created_at);
+""")
+
+
+# v17. Копия присланного файла у навигатора.
+#
+# media_path — это путь на диске сервиса переписки, и открыть его из браузера
+# менеджер не может: файл лежит у мессенджера, навигатор о нём только знает.
+# Менеджер видел вместо паспорта строку «смотрите в мессенджере», то есть
+# документ, ради которого вся переписка и затевалась, до него не доезжал.
+#
+# media_file — имя того же файла уже в хранилище навигатора (каталог рядом с
+# базой, не в самой базе: паспорт в SQLite не кладут — база целиком уезжает в
+# бэкап, а удалить оттуда одну картинку по требованию человека нельзя).
+# Отдельная колонка, а не замена media_path: по пути мессенджер продолжает
+# собирать заявку в чат безопасности и стирать файлы через неделю.
+MIGRATIONS.append("""
+ALTER TABLE candidate_inbound ADD COLUMN media_file TEXT NOT NULL DEFAULT '';
+""")
+
+# --- v18: приоритетные объекты ------------------------------------------------
+#
+# Заказчик каждую неделю называет, какие объекты «горят»: на них нужно набрать
+# людей в первую очередь. До этой таблицы приоритет жил только в переписке, а
+# агент предлагал то, что выше по нашей выплате, — и звонил людей на объект,
+# который уже укомплектован.
+#
+# Срок обязателен. Приоритет без даты окончания — это приоритет навсегда: он
+# тихо продолжает действовать, когда неделя прошла и «горит» уже другое. Ровно
+# так протухли двадцать три правила выплат, и заметили мы это случайно.
+MIGRATIONS.append("""
+CREATE TABLE priority_objects (
+    pattern    TEXT NOT NULL,
+    tier       INTEGER NOT NULL DEFAULT 1,
+    valid_from TEXT NOT NULL,
+    valid_to   TEXT NOT NULL,
+    note       TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    author     TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (pattern, valid_from)
+);
+
+CREATE INDEX idx_priority_window ON priority_objects(valid_from, valid_to);
+""")
