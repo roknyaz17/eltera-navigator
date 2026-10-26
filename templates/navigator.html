@@ -666,6 +666,18 @@ function payText(r) {
   return out ? out.charAt(0).toUpperCase() + out.slice(1) : '';
 }
 
+/* Поле «%» — как читать ставку: «ТК», «+6%» (налог самозанятого платит
+   контрагент, ставка доходит целиком) или «−6%» (платит сам, на руки
+   меньше). Значение приходит готовым (navigator_api.tax_block); «−6%» без
+   слова о налоге в заявке — по умолчанию (st 'def'), его стоит уточнить.
+   Только рекрутёру, как и оформление. */
+const TAX_HINT = { '+6%': 'налог самозанятого платит контрагент', '−6%': 'налог самозанятого платит сам' };
+
+function taxText(r) {
+  const t = r.tax || {};
+  return t.v ? t.v.split(' / ').map((x) => TAX_HINT[x] ? x + ' — ' + TAX_HINT[x] : x).join('; ') : '';
+}
+
 function dedLine(d) {
   const unit = d.unit === 'shift' ? 'за смену'
     : (d.unit === 'day' ? 'в день' : (d.unit === 'month' ? 'в месяц' : (d.unit === 'once' ? 'единоразово' : '')));
@@ -1890,6 +1902,8 @@ function card(r) {
 
   const facts = [
     field('Ставка кандидата', money(r.rate) + (r.hourly ? ' · ' + r.hourly + ' ₽/ч' : ''), r.rate ? 'yes' : 'na'),
+    Object.assign(field('%', (r.tax || {}).v, (r.tax || {}).v ? r.tax.st : 'na'),
+      { tip: taxText(r) + ((r.tax || {}).note ? '. «' + r.tax.note + '»' : '') }),
     field('График', r.sched, r.sched ? 'yes' : 'na'),
     field('Смена', r.hours ? r.hours + ' ч' : '', r.hours ? 'yes' : 'na'),
     field('Потребность', need(r), need(r) ? 'yes' : 'na'),
@@ -1939,9 +1953,10 @@ function card(r) {
     + '</div></div>';
 
   html += '<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:8px; margin-top:14px;">'
-    + facts.map((f) => '<div class="liquid-glass" style="border-radius:12px; padding:9px 11px;">'
+    + facts.map((f) => '<div class="liquid-glass" style="border-radius:12px; padding:9px 11px;"' + (f.tip ? ' title="' + esc(f.tip) + '"' : '') + '>'
       + '<div style="font-size:11px; color:rgba(var(--ink),.45);">' + esc(f.k) + '</div>'
-      + (f.ok ? '<div style="font-size:13.5px; font-weight:600; color:rgb(var(--text)); margin-top:3px; line-height:1.3;">' + esc(f.v) + '</div>' : NA_DOT)
+      + (f.ok || f.def ? '<div style="font-size:13.5px; font-weight:600; color:rgb(var(--text)); margin-top:3px; line-height:1.3;">' + esc(f.v) + '</div>'
+        + (f.def ? '<div style="font-size:11px; color:rgb(var(--warn)); margin-top:2px;">по умолчанию</div>' : '') : NA_DOT)
       + '</div>').join('')
     + '</div>';
 
@@ -2629,6 +2644,7 @@ function viewDetail(d) {
     { title: 'Условия', rows: [
       field('Ставка кандидата', d.rate ? money(d.rate) + ' за смену' : '', d.rate ? 'yes' : 'na'),
       field('Ставка за час', d.hourly ? d.hourly + ' ₽' : '', d.hourly ? 'yes' : 'na'),
+      field('%', taxText(d), taxText(d) ? d.tax.st : 'na'),
       field('График', d.sched, d.sched ? 'yes' : 'na'),
       field('Формат работы', d.workFormat, d.workFormat ? 'yes' : 'na'),
       field('Минимум смен', d.minShifts ? d.minShifts + ' смен' : '', d.minShifts ? 'yes' : 'na'),
@@ -2663,6 +2679,7 @@ function viewDetail(d) {
     { title: 'Деньги', rows: [
       field('Выплаты', payText(d), d.pay.st === 'yes' ? 'yes' : 'na'),
       field('Как написано о выплатах', d.pay.note || '', d.pay.note ? 'yes' : 'na'),
+      field('Как написано о налоге', (d.tax || {}).note || '', (d.tax || {}).note ? 'yes' : 'na'),
       field('Удержания', d.ded.map(dedLine).join('; ') || 'Удержаний нет', d.dedSt === 'na' ? 'na' : (d.dedSt === 'no' ? 'no' : 'yes')),
       field('Проезд', travelText(d) || 'Не компенсируется', d.travel.st === 'na' ? 'na' : (d.travel.st === 'no' ? 'no' : 'yes')),
       field('Условия проезда', d.travel.terms || '', d.travel.terms ? 'yes' : 'na')
