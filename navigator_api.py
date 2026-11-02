@@ -317,6 +317,26 @@ def parse_ethnic_limits(*sources: Optional[str]) -> Dict[str, Dict[str, str]]:
     return out
 
 
+# Запрет, известный про контрагента целиком, а не из заявки (со слов
+# пользователя 02.11.2026): МЕЛИОР с цыганами не работает. В постах МЕЛИОРа
+# об этом не пишут, позиции молчали, а фильтр «кандидат-цыган» молчание
+# пропускает — и МЕЛИОР выходил в подбор. Заявка правило не перебивает.
+ETH_FIXED = {"melior": {"gyp": "МЕЛИОР с цыганами не работает"}}
+
+
+def ethnic_limits(row) -> Dict[str, Dict[str, str]]:
+    """parse_ethnic_limits по полям позиции плюс запреты контрагента."""
+    out = parse_ethnic_limits(
+        _col(row, "requirements"), _col(row, "citizenship_requirements"), _col(row, "risks"),
+    )
+    for key, rule in ETH_FIXED.get(_s(_col(row, "source")), {}).items():
+        # Что сказано в заявке — оставляем в подписи после правила: рекрутёр
+        # должен видеть и оригинал.
+        note = _join_note(rule, out[key]["note"]) if out[key]["note"] else rule
+        out[key] = {"st": "ban", "note": note}
+    return out
+
+
 def normalize_gender(raw: Optional[str]) -> str:
     text = _s(raw).lower().replace("ё", "е")
     if not text:
@@ -890,9 +910,7 @@ def position_row(
     # Читаем три поля: в «Гражданстве» это лежит у трёх позиций из 874, всё
     # остальное — в «Требованиях» и «Рисках». sb_policy не смотрим: там этого
     # не бывает ни разу.
-    eth = parse_ethnic_limits(
-        row["requirements"], row["citizenship_requirements"], row["risks"],
-    )
+    eth = ethnic_limits(row)
     house = housing_block(row)
     meals = meals_block(row)
     travel = travel_block(row)

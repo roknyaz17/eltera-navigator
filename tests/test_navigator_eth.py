@@ -6,7 +6,7 @@
 отправить человека на объект, где ему откажут на проходной.
 """
 
-from navigator_api import parse_ethnic_limits
+from navigator_api import ethnic_limits, parse_ethnic_limits
 
 
 def st(*sources):
@@ -142,3 +142,31 @@ def test_подпись_не_двоится():
 def test_подпись_цитирует_дословно_и_с_регистром():
     note = parse_ethnic_limits("до 50 лет, СТРОГО НЕ ЦЫГАН, только РФ")["gyp"]["note"]
     assert note == "СТРОГО НЕ ЦЫГАН"
+
+
+# ------------------------------------------------------- правило контрагента
+
+def pos(source, req="", cit="", risks=""):
+    return {"source": source, "requirements": req,
+            "citizenship_requirements": cit, "risks": risks}
+
+
+def test_мелиор_цыган_не_берёт_даже_когда_пост_молчит():
+    """Со слов пользователя 02.11.2026. В постах МЕЛИОРа этого нет вовсе."""
+    limits = ethnic_limits(pos("melior", "РФ, РБ, до 45 лет; оформление ТК, СЗ"))
+    assert limits["gyp"]["st"] == "ban"
+    assert "МЕЛИОР" in limits["gyp"]["note"]
+    # Про Кавказ правило ничего не говорит.
+    assert limits["kav"]["st"] == "na"
+
+
+def test_мелиор_пост_не_перебивает_правило_но_виден_в_подписи():
+    limits = ethnic_limits(pos("melior", "РФ (Кавказ можно, цыгане можно)"))
+    assert limits["gyp"]["st"] == "ban"
+    assert "цыгане можно" in limits["gyp"]["note"]
+    assert limits["kav"]["st"] == "ok"
+
+
+def test_правило_только_для_мелиора():
+    assert ethnic_limits(pos("tabiya", "РФ (Цыгане по согласованию)"))["gyp"]["st"] == "ok"
+    assert ethnic_limits(pos("vahtapro", "до 50 лет, только РФ"))["gyp"]["st"] == "na"
