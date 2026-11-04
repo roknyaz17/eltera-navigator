@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from registry import dictionaries as dicts
 from registry import geo, rates
 from registry.labels import SOURCE_TITLES
+from registry.sources import RETIRED_SOURCES
 
 MONTHS_GEN = [
     "января", "февраля", "марта", "апреля", "мая", "июня",
@@ -52,7 +53,6 @@ DEFAULT_TEMPLATE = (
 SOURCE_SCHEDULE = {
     "vahtapro": "09:30, 13:00",
     "aaaplus": "09:30",
-    "kpk": "12:00",
     "yappi": "12:00",
     "marketstaff": "12:00",
     "tabiya": "12:00",
@@ -1119,6 +1119,10 @@ def sources_block(conn, now: datetime) -> List[Dict[str, Any]]:
             "SELECT source, COUNT(*) AS cnt FROM positions WHERE is_active = 1 GROUP BY source"
         )
     }
+    # Снятые контрагенты (КНК) в списке источников не показываются: заявки
+    # их в базе остаются ради истории кандидатов, но источником они больше
+    # не являются.
+    rows = [row for row in rows if _s(row["source"]) not in RETIRED_SOURCES]
     out = []
     for index, row in enumerate(rows, start=1):
         key = _s(row["source"])

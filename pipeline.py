@@ -31,6 +31,7 @@ from project_kb import refresh_if_stale as refresh_project_kb
 from registry.export_sheets import export_to_sheets
 from registry.ingest import RegistryIngestor
 from registry.models import RawRequest
+from registry.sources import RETIRED_SOURCES
 from seatable_adapter import SeatableExternalLinkClient
 from sheets_adapter import GoogleSheetsService
 from telegram_userbot import TelegramUserbot
@@ -144,7 +145,9 @@ SOURCE_NAMES: Dict[str, str] = {
     "melior": "МЕЛИОР",
     "tabiya": "Табия",
 }
-ALL_SOURCES = list(SOURCE_NAMES.keys())
+# Имя снятого источника оставлено в SOURCE_NAMES для подписей, но запускать
+# его нельзя: в ALL_SOURCES его нет, parse_sources его отклоняет.
+ALL_SOURCES = [s for s in SOURCE_NAMES if s not in RETIRED_SOURCES]
 
 # Контрагент переименовался в «Градус», а ключ источника остался прежним: он
 # лежит в колонке source у всех заявок и позиций, в именах переменных окружения

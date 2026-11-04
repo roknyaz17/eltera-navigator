@@ -17,7 +17,7 @@ FastAPI-приложение со встроенным APScheduler и веб-с�
 
 Расписание (Europe/Moscow):
     09:30  vahtapro + aaaplus + melior     с reset для них
-    12:00  kpk + yappi + marketstaff       с reset для них
+    12:00  yappi + marketstaff             с reset для них (КНК снята 04.11.2026)
     13:00  vahtapro                        без reset
     13:30  ametist                         без reset (окно 14 дн., снимок «Обновляем потребность»)
 
@@ -115,9 +115,9 @@ JOBS = {
     },
     "noon_tables": {
         "trigger": CronTrigger(hour=12, minute=0, timezone="Europe/Moscow"),
-        "sources": ["kpk", "yappi", "marketstaff"],
+        "sources": ["yappi", "marketstaff"],
         "reset": True,
-        "description": "12:00 МСК — КНК + ЯППИ + Маркетстафф с reset",
+        "description": "12:00 МСК — ЯППИ + Маркетстафф с reset",
     },
     "afternoon_vahtapro": {
         "trigger": CronTrigger(hour=13, minute=0, timezone="Europe/Moscow"),
